@@ -21,6 +21,8 @@ object Sys {
     fun countryName(code: String, lang: String): String = jsDisplayName(lang, "region", code).ifEmpty { code }
     fun languageName(code: String, lang: String): String = jsDisplayName(lang, "language", code).ifEmpty { code }
     fun deviceLanguage(): String = jsNavigatorLanguage().substringBefore('-')
+    /** the browser's languages, the first first */
+    fun deviceLanguages(): List<String> = jsNavigatorLanguages().split(',').map { it.substringBefore('-') }.filter { it.isNotEmpty() }.distinct()
     fun deviceRegion(): String = jsNavigatorLanguage().substringAfter('-', "")
 
     /** one thread: a plain map is safe */
@@ -48,6 +50,7 @@ private fun jsShortTime(ms: Double): String = js("new Date(ms).toLocaleTimeStrin
 private fun jsDisplayName(lang: String, type: String, code: String): String =
     js("(function(){ try { return new Intl.DisplayNames([lang], { type: type }).of(code) || '' } catch (e) { return '' } })()")
 private fun jsNavigatorLanguage(): String = js("navigator.language || 'en-US'")
+private fun jsNavigatorLanguages(): String = js("(navigator.languages || [navigator.language || 'en']).join(',')")
 
 /** one thread: @Volatile means nothing in the browser */
 @Target(AnnotationTarget.FIELD, AnnotationTarget.PROPERTY)

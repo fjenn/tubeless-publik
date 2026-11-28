@@ -3,6 +3,7 @@ package app.tubeless.ui
 import app.tubeless.engine.SponsorBlock
 import app.tubeless.engine.Sys
 import app.tubeless.engine.Ads
+import app.tubeless.engine.AudioPick
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -340,8 +341,9 @@ class Playback(private val app: AppState) {
                 // songs start from the top; a video where you left it
                 // where its card in the feed got to (muted autoplay); where it was left here; else, signed in,
                 // where the account left it on another device
+                // (not for a saved copy: it starts at once, without waiting on the network, which may not be there)
                 val at = startSec ?: inlineAt?.let { it / 1000 } ?: if (asSong || s.live) null else store.position(v.id)
-                    ?: if (app.feedSource.signedIn) runCatching { YouTubeAccount.resumeAt(v.id, s.lengthSec.takeIf { it > 0 } ?: v.lengthSec) }.getOrNull() else null
+                    ?: if (app.feedSource.signedIn && s.client != "offline") runCatching { YouTubeAccount.resumeAt(v.id, s.lengthSec.takeIf { it > 0 } ?: v.lengthSec) }.getOrNull() else null
                 if (video?.id != v.id) return@launch
                 start(s, at)
             } catch (e: YtError) {
@@ -363,6 +365,27 @@ class Playback(private val app: AppState) {
                     "tries" to YouTube.tries.joinToString(" / "))
             }
         }
+    }
+
+    /** audio tracks picked by hand (the player sheet, the dub note), by video: that video keeps it when it comes back */
+    private val audioPicked = LinkedHashMap<String, String>()
+
+    /**
+     * The audio language [s] starts in (every player, Shorts and the feed's previews too): the one picked by hand
+     * for this video, else [AudioPick.preferred] for this person's languages (the app's, then
+     * the device's); null: the original
+     */
+    fun audioLangFor(s: Stream): String? {
+        audioPicked[s.id]?.let { l -> if (s.audio.any { it.audioLang == l }) return l }
+        val set = store.settings.value
+        val mine = listOfNotNull(set.lang.takeIf { it.isNotEmpty() }) + Sys.deviceLanguages()
+        return AudioPick.preferred(s.audio, mine, set.dubs)
+    }
+
+    /** a track picked by hand: played now and kept for this video */
+    fun pickAudio(lang: String) {
+        (player.state.value.videoId ?: stream?.id)?.let { id -> audioPicked.remove(id); audioPicked[id] = lang; if (audioPicked.size > 300) audioPicked.remove(audioPicked.keys.first()) }
+        player.setAudioTrack(lang)
     }
 
     /** the same video again from [posMs] on whichever player is in use now (casting started or stopped) */
@@ -407,6 +430,7 @@ class Playback(private val app: AppState) {
                 speed = if (music) 1f else speedFor(video?.channelId ?: s.channelId),
                 audioOnly = music && set.musicAudioOnly && !withVideo,
                 codec = codecFor?.takeIf { it.first == s.id }?.second ?: set.codec,
+                audioLang = audioLangFor(s),
                 captions = choice?.first?.takeIf { set.captions || s.client == "offline" },
                 captionLang = set.captionLang.ifEmpty { lang() },
                 standbyCaption = choice?.first,

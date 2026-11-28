@@ -41,7 +41,7 @@ object AccountFeedSource : FeedSource {
 }
 
 /** Store.mirror while signed in: each change is sent to the account in the background. */
-class AccountSync(private val store: Store, private val scope: CoroutineScope) : AccountMirror {
+class AccountSync(private val store: Store, private val scope: CoroutineScope, private val toast: (String) -> Unit = {}) : AccountMirror {
     /** playlist adds/removes wait 1.5 s and go as one edit (copying a playlist is one write, not fifty) */
     private val adds = HashMap<String, MutableList<String>>()
     private val removes = HashMap<String, MutableList<String>>()
@@ -50,6 +50,27 @@ class AccountSync(private val store: Store, private val scope: CoroutineScope) :
     private val creating = HashMap<String, MutableList<String>>()
 
     private fun go(block: suspend () -> Unit) { scope.launch { try { block() } catch (_: Exception) {} } }
+
+    /**
+     * A write the user sees the result of: when the account didn't take it (an error, a lapsed sign-in, the write
+     * limit), the button goes back to how it was and a toast says so. Before, the failure was swallowed and the app
+     * showed a like or subscription the account never got.
+     */
+    private fun send(fail: String, undo: () -> Unit, block: suspend () -> Boolean) {
+        scope.launch {
+            val ok = try { block() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+            if (ok) return@launch
+            // put back without sending that back to the account
+            val m = store.mirror
+            store.mirror = null
+            try { undo() } finally { store.mirror = m }
+            toast(tr(fail))
+        }
+    }
+
+    /** the like buttons' params from the signed-in watch page of this video, as youtube.com sends them */
+    private fun likeParams(id: String, pick: (app.tubeless.engine.WatchState) -> String?) =
+        AccountWatch.state?.takeIf { it.videoId == id }?.let(pick)
 
     /** a YouTube playlist id (one made here has "HP..." until the account gives it one) */
     private fun remoteList(list: String): String? = when {
@@ -60,8 +81,14 @@ class AccountSync(private val store: Store, private val scope: CoroutineScope) :
 
     override fun list(list: String, v: Video, on: Boolean) {
         when (list) {
-            "likes" -> go { if (on) YouTubeAccount.like(v.id) else YouTubeAccount.removeLike(v.id) }
-            "dislikes" -> go { if (on) YouTubeAccount.dislike(v.id) else YouTubeAccount.removeLike(v.id) }
+            "likes" -> send("Couldn't update the like on your YouTube account", { store.setInList("likes", v, !on) }) {
+                if (on) YouTubeAccount.like(v.id, likeParams(v.id) { it.likeParams })
+                else YouTubeAccount.removeLike(v.id, likeParams(v.id) { it.removeLikeParams })
+            }
+            "dislikes" -> send("Couldn't update the dislike on your YouTube account", { store.setInList("dislikes", v, !on) }) {
+                if (on) YouTubeAccount.dislike(v.id, likeParams(v.id) { it.dislikeParams })
+                else YouTubeAccount.removeLike(v.id, likeParams(v.id) { it.removeLikeParams })
+            }
             else -> {
                 creating[list]?.let { if (on) it += v.id; return }
                 val id = remoteList(list) ?: return
@@ -80,11 +107,19 @@ class AccountSync(private val store: Store, private val scope: CoroutineScope) :
         for (id in ids) {
             val a = adds.remove(id).orEmpty().toList()
             val r = removes.remove(id).orEmpty().toList()
-            if (a.isNotEmpty() || r.isNotEmpty()) try { YouTubeAccount.editPlaylist(id, a, r) } catch (_: Exception) {}
+            if (a.isEmpty() && r.isEmpty()) continue
+            val ok = try { YouTubeAccount.editPlaylist(id, a, r) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+            // the list here keeps the change (it may be a batch of many); the toast says the account didn't get it
+            if (!ok) toast(tr(if (id == "WL") "Couldn't update Watch later on your YouTube account" else "Couldn't update the playlist on your YouTube account"))
         }
     }
 
-    override fun subscribe(cid: String, on: Boolean) = go { if (on) YouTubeAccount.subscribe(cid) else YouTubeAccount.unsubscribe(cid) }
+    override fun subscribe(cid: String, on: Boolean) {
+        val was = store.lib.value.subs[cid]
+        send(if (on) "Couldn't subscribe on your YouTube account" else "Couldn't unsubscribe on your YouTube account", {
+            if (on) store.subscribe(cid, "", "", false) else if (was != null) store.subscribe(cid, was.name, was.thumb, true)
+        }) { if (on) YouTubeAccount.subscribe(cid) else YouTubeAccount.unsubscribe(cid) }
+    }
     override fun historyRemove(id: String) = go { YouTubeAccount.removeFromHistory(id) }
     override fun historyClear() = go { YouTubeAccount.clearHistory() }
     override fun notInterested(v: Video, channel: Boolean) = go { YouTubeAccount.notInterested(v.id, channel) }

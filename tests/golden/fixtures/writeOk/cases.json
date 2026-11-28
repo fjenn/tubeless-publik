@@ -1,0 +1,146 @@
+{
+ "like_done": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actions": [
+   {
+    "openPopupAction": {
+     "popup": {
+      "notificationActionRenderer": {
+       "responseText": {
+        "runs": [
+         {
+          "text": "Added to Liked videos"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "subscribe_done": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actions": [
+   {
+    "updateSubscribeButtonAction": {
+     "subscribed": true,
+     "channelId": "UCabc"
+    }
+   }
+  ]
+ },
+ "comment_done": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actionResult": {
+   "status": "STATUS_SUCCEEDED"
+  },
+  "frameworkUpdates": {
+   "entityBatchUpdate": {
+    "mutations": []
+   }
+  }
+ },
+ "signed_out_answer": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": true
+   }
+  }
+ },
+ "sign_in_dialog": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actions": [
+   {
+    "openPopupAction": {
+     "popup": {
+      "modalWithTitleAndButtonRenderer": {
+       "button": {
+        "buttonRenderer": {
+         "navigationEndpoint": {
+          "signInEndpoint": {
+           "hack": true
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "error": {
+  "error": {
+   "code": 400,
+   "message": "Request contains an invalid argument.",
+   "status": "INVALID_ARGUMENT"
+  }
+ },
+ "error_alert": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actions": [
+   {
+    "addToToastAction": {
+     "item": {
+      "alertRenderer": {
+       "type": "ERROR",
+       "text": {
+        "simpleText": "Something went wrong"
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "comment_failed": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actionResult": {
+   "status": "STATUS_FAILED"
+  }
+ },
+ "feedback_not_processed": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "feedbackResponses": [
+   {
+    "isProcessed": false
+   }
+  ]
+ }
+}

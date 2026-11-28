@@ -775,19 +775,45 @@ fun PlaylistPicker(v: Video, app: AppState, dismiss: () -> Unit) {
     var making by remember { mutableStateOf(false) }
     // as YouTube: Watch later first, then the playlists, newest first
     val lists = listOf("wl" to tr("Watch later")) + lib.playlists.entries.sortedByDescending { it.value.updated }.map { it.key to it.value.title }
+    // signed in: the account's own "Save to..." list, so its playlists show (not only the ones kept here) and a video
+    // already in the account's Watch later or a playlist shows ticked
+    var targets by remember(v.id) { mutableStateOf<List<app.tubeless.engine.SaveTarget>>(emptyList()) }
+    val remoteOn = remember(v.id) { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    LaunchedEffect(v.id, app.account) {
+        if (app.feedSource.signedIn) targets = YouTubeAccount.saveTargets(v.id).orEmpty().onEach { if (it.id !in remoteOn) remoteOn[it.id] = it.has }
+    }
+    val scope = rememberCoroutineScope()
     @Composable
     fun Rows() {
         for ((id, title) in lists) {
-            val on = app.store.inList(id, v.id)
-            Row(Modifier.fillMaxWidth().clickable { app.store.setInList(id, v, !on) }.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(on, { app.store.setInList(id, v, !on) })
+            // the local list, or what the account says for the same list
+            val on = app.store.inList(id, v.id) || remoteOn[if (id == "wl") "WL" else id] == true
+            fun flip() { remoteOn[if (id == "wl") "WL" else id] = !on; app.store.setInList(id, v, !on) }
+            Row(Modifier.fillMaxWidth().clickable { flip() }.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(on, { flip() })
                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        // the account's playlists that aren't kept here: straight to the account, put back with a toast if it refuses
+        for (t in targets) {
+            if (t.id == "WL" || lib.playlists.containsKey(t.id)) continue
+            val on = remoteOn[t.id] == true
+            fun flip() {
+                remoteOn[t.id] = !on
+                scope.launch {
+                    val ok = YouTubeAccount.editPlaylist(t.id, add = if (!on) listOf(v.id) else emptyList(), remove = if (on) listOf(v.id) else emptyList())
+                    if (!ok) { remoteOn[t.id] = on; app.toast(tr("Couldn't update the playlist on your YouTube account")) }
+                }
+            }
+            Row(Modifier.fillMaxWidth().clickable { flip() }.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(on, { flip() })
+                Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
     if (LocalCompact.current) {
         // a phone: a sheet from the bottom, "Save video to…", the lists, and New playlist at its foot
-        androidx.compose.material3.ModalBottomSheet(onDismissRequest = dismiss) {
+        androidx.compose.material3.ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = dismiss) {
             Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("Save video to..."), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))

@@ -62,6 +62,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -274,7 +276,7 @@ fun titleOf(v: Video, app: AppState): String = branded(v, app)?.title?.ifEmpty {
 
 /** Thumbnail with the length badge and a red bar for how much you've watched. */
 @Composable
-fun Thumb(v: Video, app: AppState, modifier: Modifier = Modifier, rounded: Int = 16) {
+fun Thumb(v: Video, app: AppState, modifier: Modifier = Modifier, rounded: Int = 16, feedPlay: Boolean = true) {
     val pos = app.store.lib.state.value.pos[v.id]
     Box(modifier.aspectRatio(16f / 9f).clip(RoundedCornerShape(rounded.dp))) {
         if (v.author.endsWith("- Topic") || v.author.endsWith("- 주제")) {
@@ -299,8 +301,9 @@ fun Thumb(v: Video, app: AppState, modifier: Modifier = Modifier, rounded: Int =
             )
         }
         // a phone feed's top card playing muted (FeedPlay)
-        if (app.platform.touch) FeedPlayLayer(app, v)
-        if (pos != null && (pos.getOrNull(1) ?: 0) > 0 && FeedPlay.id != v.id) {
+        // ([feedPlay] off: a row that never plays, such as Continue watching, keeps its picture when the feed plays the same video)
+        if (app.platform.touch && feedPlay) FeedPlayLayer(app, v)
+        if (pos != null && (pos.getOrNull(1) ?: 0) > 0 && (FeedPlay.id != v.id || !feedPlay)) {
             val f = (pos[0].toFloat() / pos[1]).coerceIn(0f, 1f)
             Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66FFFFFF))) {
                 Box(Modifier.fillMaxWidth(f).height(4.dp).background(Red))
@@ -348,7 +351,7 @@ fun VideoMenu(v: Video, app: AppState, extra: List<Pair<String, () -> Unit>> = e
         }
         if (LocalCompact.current) {
             // a phone: a sheet from the bottom with an icon on each row, as YouTube's app
-            if (open) androidx.compose.material3.ModalBottomSheet(onDismissRequest = { open = false }) {
+            if (open) androidx.compose.material3.ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = { open = false }) {
                 Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                     for ((icon, label, act) in rows) {
                         if (label == "-") { androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 6.dp)); continue }
@@ -581,6 +584,8 @@ fun ItemGrid(
     hero: Boolean = false,
     /** pulled down (touch), or its tab tapped again at the top: a fresh list */
     refresh: (suspend () -> Unit)? = null,
+    /** search: a run of Shorts (one of YouTube's Shorts shelves) is one compact shelf between the videos, as YouTube shows it */
+    shortsShelves: Boolean = false,
 ) {
     val look = LocalLook.current
     val scope = rememberCoroutineScope()
@@ -618,6 +623,11 @@ fun ItemGrid(
     // a computer: the website's grid of 3 to 6 columns and its cards
     val web = webDesk(app) && !rows && !hero
     val webQueue = remember(list) { list.filterIsInstance<Video>() }
+    // YouTube's search answers carry its Shorts in shelves of 5 to 20; laid out one by one they took over the
+    // results (35 Shorts to 14 videos for "how to cook pasta"), so each run of them is one small shelf here
+    val runs = if (shortsShelves) shortsRuns(list) else emptyMap()
+    val inShelf = remember(runs) { runs.values.flatMap { r -> r.drop(1).map { v -> v.id } }.toHashSet() }
+    val cells = if (runs.isEmpty()) list else list.filter { it.id !in inShelf }
     LazyVerticalGrid(
         columns = if (web) GridCells.Fixed(webCols(maxWidth - 48.dp)) else if (big) GridCells.Fixed(1) else if (rows) GridCells.Adaptive(560.dp) else if (tv) GridCells.Fixed(4)
             else if (look == 2) (if (LocalCompact.current) GridCells.Fixed(2) else GridCells.Adaptive(250.dp))
@@ -628,7 +638,9 @@ fun ItemGrid(
         contentPadding = PaddingValues(horizontal = if (LocalCompact.current) (if (look == 2 && !rows) 7.dp else 0.dp) else if (tv) TV_EDGE else 24.dp, vertical = if (tv) 16.dp else 8.dp),
     ) {
         if (header != null) item(span = { GridItemSpan(maxLineSpan) }) { header() }
-        itemsIndexed(list, key = { _, it -> it.id }, span = { i, it -> if ((it is Video || (web && it is Playlist)) && !rows && !(hero && i == 0)) GridItemSpan(1) else GridItemSpan(maxLineSpan) }) { i, it ->
+        itemsIndexed(cells, key = { _, it -> it.id }, span = { i, it -> if (it.id in runs) GridItemSpan(maxLineSpan) else if ((it is Video || (web && it is Playlist)) && !rows && !(hero && i == 0)) GridItemSpan(1) else GridItemSpan(maxLineSpan) }) { i, it ->
+            val run = runs[it.id]
+            if (run != null) { ShortsRun(run, app); return@itemsIndexed }
             Box((if (tv && it.id == list[0].id) Modifier.focusRequester(first) else Modifier).arrive(it.id, i, seen)) {
                 when (it) {
                     is Video -> if (rows) VideoRow(it, app, thumbWidth = if (big) bigThumb else 168.dp, big = big)
@@ -647,6 +659,63 @@ fun ItemGrid(
         if (loading) item(span = { GridItemSpan(maxLineSpan) }) { Busy() }
     }
     }
+    }
+}
+
+/** the runs of 2 or more Shorts in a row, by their first one's id */
+private fun shortsRuns(list: List<Item>): Map<String, List<Video>> {
+    val out = LinkedHashMap<String, List<Video>>()
+    var i = 0
+    while (i < list.size) {
+        val a = list[i]
+        if (a is Video && a.short) {
+            var j = i
+            while (j < list.size && (list[j] as? Video)?.short == true) j++
+            if (j - i >= 2) out[a.id] = list.subList(i, j).map { it as Video }
+            i = j
+        } else i++
+    }
+    return out
+}
+
+/**
+ * One Shorts shelf in search results, as on YouTube: a phone shows two (four when there are enough) standing
+ * side by side with "Show more" for the rest; a wider screen a row to scroll.
+ */
+@Composable
+private fun ShortsRun(run: List<Video>, app: AppState) {
+    val phone = LocalCompact.current
+    var more by remember(run.first().id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
+            Icon(Sym.Bolt.fill, null, Modifier.size(22.dp), tint = Color(0xFFFF0033))
+            Text("Shorts", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 6.dp))
+        }
+        @Composable
+        fun Tile(v: Video, m: Modifier) {
+            val shape = RoundedCornerShape(12.dp)
+            Column(m) {
+                Box(Modifier.fillMaxWidth().aspectRatio(9f / 16f).clip(shape).clickable { app.watch(v) }) {
+                    Img(v.thumb, Modifier.fillMaxSize())
+                }
+                Text(titleOf(v, app), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp, end = 4.dp))
+                if (v.viewsText.isNotEmpty()) Text(v.viewsText, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+        if (phone) {
+            val shown = if (more) run else run.take(if (run.size >= 4) 4 else 2)
+            for (pair in shown.chunked(2)) Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (v in pair) Tile(v, Modifier.weight(1f))
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+            if (run.size > shown.size || more) androidx.compose.material3.OutlinedButton(onClick = { more = !more }, modifier = Modifier.fillMaxWidth()) {
+                Text(tr(if (more) "Show less" else "Show more"))
+            }
+        } else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(run.size) { k -> Tile(run[k], Modifier.width(200.dp)) }
+        }
     }
 }
 
@@ -1175,7 +1244,7 @@ fun ContinueRow(app: AppState, forYou: Boolean = true) {
         items(left.size, key = { left[it].id }) { i ->
             val v = left[i]
             Column(Modifier.width(220.dp).clip(RoundedCornerShape(18.dp)).tvClickable(RoundedCornerShape(18.dp)) { app.watch(v) }) {
-                Thumb(v, app, Modifier.fillMaxWidth(), rounded = 18)
+                Thumb(v, app, Modifier.fillMaxWidth(), rounded = 18, feedPlay = false)
                 // kept clear of the card's rounded bottom corners, which cut off the start of the last line
                 Text(titleOf(v, app), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 6.dp, start = 4.dp, end = 4.dp, bottom = 10.dp))
@@ -1244,3 +1313,10 @@ fun Modifier.warmOnPress(app: AppState, v: Video): Modifier {
         }
     }
 }
+
+/**
+ * A sheet from the bottom stops under the status bar: opened all the way (the player's settings, a long
+ * description) its grip and first row were under the clock and the battery (iOS).
+ */
+@Composable
+fun Modifier.sheetTop(): Modifier = this.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)

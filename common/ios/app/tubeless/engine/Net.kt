@@ -19,6 +19,18 @@ import kotlinx.coroutines.CancellationException
  * the OkHttp one in common/jvm: to YouTube from this device, or to the connected Tubeless server.
  */
 object Net {
+    /**
+     * A test switch (TUBELESS_NO_NET=1 in the launch environment, the simulator's airplane mode): every web request
+     * of the app fails as it does with no connection (Net's calls at once, logged as net_blocked; images through a
+     * dead proxy). Never set on a phone.
+     */
+    val dead: Boolean = platform.Foundation.NSProcessInfo.processInfo.environment["TUBELESS_NO_NET"] == "1"
+
+    private fun refuse(url: String): Nothing {
+        app.tubeless.ui.E2E.log("net_blocked", "url" to url.substringBefore('?').take(160))
+        throw okio.IOException("The Internet connection appears to be offline. (test)")
+    }
+
     val client = HttpClient(Darwin) {
         expectSuccess = false
         // no shared cookie store: URLSession would otherwise keep the account's Set-Cookie and send it on the
@@ -28,6 +40,8 @@ object Net {
                 setHTTPShouldSetCookies(false)
                 setHTTPCookieAcceptPolicy(platform.Foundation.NSHTTPCookieAcceptPolicy.NSHTTPCookieAcceptPolicyNever)
                 setHTTPCookieStorage(null)
+                if (dead) setConnectionProxyDictionary(mapOf<Any?, Any?>("HTTPEnable" to 1, "HTTPProxy" to "127.0.0.1", "HTTPPort" to 9,
+                    "HTTPSEnable" to 1, "HTTPSProxy" to "127.0.0.1", "HTTPSPort" to 9))
             }
         }
         install(HttpTimeout) {
@@ -49,6 +63,7 @@ object Net {
     /** a GET whose answer is bytes (a range of a video format): its status and body; only a failed connection throws */
     suspend fun bytes(url: String, headers: Map<String, String>): Pair<Int, ByteArray> {
         local(url)?.let { return it }
+        if (dead) refuse(url)
         val r: HttpResponse = try {
             client.request(url) { this.method = HttpMethod.Get; headers.forEach { (k, v) -> header(k, v) } }
         } catch (e: CancellationException) {
@@ -74,6 +89,7 @@ object Net {
 
     private suspend fun call(method: HttpMethod, url: String, body: String?, headers: Map<String, String>): String {
         if (!url.startsWith("http", ignoreCase = true)) throw okio.IOException("not a web address")
+        if (dead) refuse(url)
         val r: HttpResponse = try {
             client.request(url) {
                 this.method = method

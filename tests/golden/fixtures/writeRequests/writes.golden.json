@@ -1,0 +1,174 @@
+[
+  {
+    "call": [
+      "like",
+      "dQw4w9WgXcQ",
+      "Cg0KC2RRdzR3OVdnWGNRIAAoAA%3D%3D"
+    ],
+    "requests": [
+      {
+        "endpoint": "like/like",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"target\":{\"videoId\":\"dQw4w9WgXcQ\"},\"params\":\"Cg0KC2RRdzR3OVdnWGNRIAAoAA%3D%3D\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "dislike",
+      "dQw4w9WgXcQ",
+      null
+    ],
+    "requests": [
+      {
+        "endpoint": "like/dislike",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"target\":{\"videoId\":\"dQw4w9WgXcQ\"}}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "removeLike",
+      "dQw4w9WgXcQ",
+      "Cg0KC2RRdzR3OVdnWGNR"
+    ],
+    "requests": [
+      {
+        "endpoint": "like/removelike",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"target\":{\"videoId\":\"dQw4w9WgXcQ\"},\"params\":\"Cg0KC2RRdzR3OVdnWGNR\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "subscribe",
+      "UCuAXFkgsw1L7xaCfnd5JJOw"
+    ],
+    "requests": [
+      {
+        "endpoint": "subscription/subscribe",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"channelIds\":[\"UCuAXFkgsw1L7xaCfnd5JJOw\"],\"params\":\"EgIIAhgA\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "unsubscribe",
+      "UCuAXFkgsw1L7xaCfnd5JJOw"
+    ],
+    "requests": [
+      {
+        "endpoint": "subscription/unsubscribe",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"channelIds\":[\"UCuAXFkgsw1L7xaCfnd5JJOw\"],\"params\":\"CgIIAhgA\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "addTo",
+      "WL",
+      "dQw4w9WgXcQ"
+    ],
+    "requests": [
+      {
+        "endpoint": "browse/edit_playlist",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"playlistId\":\"WL\",\"actions\":[{\"action\":\"ACTION_ADD_VIDEO\",\"addedVideoId\":\"dQw4w9WgXcQ\"}]}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "removeFrom",
+      "PLmine1",
+      "dQw4w9WgXcQ"
+    ],
+    "requests": [
+      {
+        "endpoint": "browse/edit_playlist",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"playlistId\":\"PLmine1\",\"actions\":[{\"action\":\"ACTION_REMOVE_VIDEO_BY_VIDEO_ID\",\"removedVideoId\":\"dQw4w9WgXcQ\"}]}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "postComment",
+      "Eg0SC2RRdzR3OVdnWGNRKgIIAFAB",
+      "Nice one"
+    ],
+    "requests": [
+      {
+        "endpoint": "comment/create_comment",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"createCommentParams\":\"Eg0SC2RRdzR3OVdnWGNRKgIIAFAB\",\"commentText\":\"Nice one\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "reply",
+      "EgZqdXN0SWQiC2RRdzR3OVdnWGNRKgIIAA%3D%3D",
+      "Agreed"
+    ],
+    "requests": [
+      {
+        "endpoint": "comment/create_comment_reply",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"createReplyParams\":\"EgZqdXN0SWQiC2RRdzR3OVdnWGNRKgIIAA%3D%3D\",\"commentText\":\"Agreed\"}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "commentAction",
+      "ENUMS_LIKE_ACTION_TOKEN"
+    ],
+    "requests": [
+      {
+        "endpoint": "comment/perform_comment_action",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"actions\":[\"ENUMS_LIKE_ACTION_TOKEN\"]}"
+      }
+    ],
+    "result": true
+  },
+  {
+    "call": [
+      "saveTargets",
+      "dQw4w9WgXcQ"
+    ],
+    "requests": [
+      {
+        "endpoint": "playlist/get_add_to_playlist",
+        "client": "WEB",
+        "signed": true,
+        "body": "{\"videoIds\":[\"dQw4w9WgXcQ\"],\"excludeWatchLater\":false}"
+      }
+    ],
+    "result": []
+  }
+]

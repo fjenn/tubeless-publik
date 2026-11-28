@@ -55,6 +55,8 @@ object Sys {
         NSLocale(localeIdentifier = lang).displayNameForKey(NSLocaleIdentifier, code.replace('-', '_')) ?: code
 
     fun deviceLanguage(): String = (NSLocale.preferredLanguages.firstOrNull() as? String)?.substringBefore('-') ?: "en"
+    /** every language in the device's list (Settings → Language & Region), the first first: "en", "es" */
+    fun deviceLanguages(): List<String> = NSLocale.preferredLanguages.mapNotNull { (it as? String)?.substringBefore('-') }.distinct()
     fun deviceRegion(): String = (NSLocale.currentLocale.objectForKey(NSLocaleCountryCode) as? String) ?: ""
 
     fun <K : Any, V : Any> concurrentMap(): MutableMap<K, V> = SnapshotMap()

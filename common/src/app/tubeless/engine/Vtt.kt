@@ -69,10 +69,14 @@ object Vtt {
             i++
             val text = StringBuilder()
             while (i < rows.size && rows[i].isNotBlank()) { if (text.isNotEmpty()) text.append(' '); text.append(rows[i].trim()); i++ }
-            if (text.isNotEmpty()) out += Line(ms(a), ms(b), text.toString())
+            if (text.isNotEmpty()) out += Line(ms(a), ms(b), plain(text.toString()))
         }
         return out
     }
+
+    /** a cue's text as words to read: VTT's escapes ("&gt;&gt;" a new speaker) turned back into characters */
+    private fun plain(s: String) = s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+        .replace("&#39;", "'").replace("&apos;", "'").replace("&lrm;", "").replace("&rlm;", "").replace("&amp;", "&")
 
     /** a timedtext address (subtitles), the only responses this rewrites */
     fun isCaption(url: String) = "/api/timedtext" in url && "fmt=vtt" in url

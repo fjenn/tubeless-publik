@@ -92,6 +92,8 @@ private fun videoRenderer(v: JsonElement): Video? {
     val badges = v.at("badges")?.findAll("style")?.mapNotNull { it.str } ?: emptyList()
     val overlays = v.at("thumbnailOverlays")?.findAll("style")?.mapNotNull { it.str } ?: emptyList()
     val views = v.at("viewCountText").text ?: v.at("videoInfo").text ?: ""
+    // shown short ("182K views"), as YouTube's app and the rest of the app do; counted from the full one
+    val shown = v.at("shortViewCountText").text?.takeIf { it.isNotEmpty() } ?: views
     val live = "BADGE_STYLE_TYPE_LIVE_NOW" in badges || "LIVE" in overlays
     val length = v.at("lengthText").text?.let(::secondsOf) ?: v.at("lengthSeconds").int ?: 0
     return Video(
@@ -100,7 +102,7 @@ private fun videoRenderer(v: JsonElement): Video? {
         author = byline.text ?: "",
         channelId = channelId,
         lengthSec = length,
-        viewsText = views,
+        viewsText = shown,
         views = countOf(views),
         publishedText = v.at("publishedTimeText").text ?: "",
         live = live,

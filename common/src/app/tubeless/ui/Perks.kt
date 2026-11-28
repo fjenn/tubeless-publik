@@ -94,6 +94,8 @@ object Perks {
  */
 object E2E {
     var path: String? = null
+    /** the iOS simulator check: Shorts moves on by itself this often (ms); 0 = never */
+    var shortsSwipeMs = 0L
     private val lock = app.tubeless.engine.SysLock()
 
     fun log(event: String, vararg fields: Pair<String, Any?>) {

@@ -35,6 +35,8 @@ targets:
         weak: true
       # voice search (IosSpeech)
       - sdk: Speech.framework
+      # the comment's language, so "Translate" shows only under the ones in another language (IosPlatform)
+      - sdk: NaturalLanguage.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tubeless.app
@@ -49,6 +51,6 @@ targets:
         # team; CI's simulator build passes CODE_SIGNING_ALLOWED=NO. Bump CURRENT_PROJECT_VERSION
         # for every upload (the script does it).
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "4"
+        CURRENT_PROJECT_VERSION: "10"
         DEVELOPMENT_TEAM: "$(APPLE_TEAM_ID)"
         CODE_SIGN_STYLE: Automatic

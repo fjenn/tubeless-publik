@@ -29,6 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -150,4 +152,42 @@ fun CommentComposer(app: AppState, token: String, posted: suspend () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * The answer box under a comment (signed in): posts with that comment's createReplyParams, as youtube.com's
+ * Reply does. What was sent stays under the comment, since the replies list only shows it after a reload.
+ */
+@Composable
+fun ReplyBox(app: AppState, replyParams: String, close: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    var text by remember(replyParams) { mutableStateOf("") }
+    var sent by remember(replyParams) { mutableStateOf<String?>(null) }
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val focus = remember { FocusRequester() }
+    sent?.let { Text(tr("You") + ": " + it, fontSize = 13.sp, color = c.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp)); return }
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Box(Modifier.fillMaxWidth()) {
+            if (text.isEmpty()) Text(tr("Add a reply…"), fontSize = 14.sp, color = c.onSurfaceVariant)
+            BasicTextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { WebTyping.active = it.isFocused },
+                textStyle = TextStyle(fontSize = 14.sp, color = c.onSurface), cursorBrush = SolidColor(c.onSurface))
+        }
+        Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(2.dp).background(c.onSurface))
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End) {
+            TextButton(onClick = close) { Text(tr("Cancel")) }
+            TextButton(enabled = text.isNotBlank() && !sending, onClick = {
+                sending = true
+                scope.launch {
+                    val t = text.trim()
+                    val ok = runCatching { YouTubeAccount.reply(replyParams, t) }.getOrDefault(false)
+                    sending = false
+                    if (ok) { sent = t; app.toast(tr("Reply posted")) } else app.toast(tr("Couldn't post your reply"))
+                }
+            }, modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (text.isNotBlank()) c.primary.copy(alpha = 0.12f) else c.surfaceVariant)) {
+                Text(tr("Reply"))
+            }
+        }
+    }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 }

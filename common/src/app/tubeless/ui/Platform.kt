@@ -117,6 +117,8 @@ interface Platform {
     val canTranslate: Boolean get() = false
     /** translates [text] into [target] (e.g. "ko") on the device */
     suspend fun translate(text: String, target: String): Translated = Translated.Failed
+    /** the language [text] is surely in ("en", "es"...), from the device; null: can't tell (the link stays) */
+    fun textLanguage(text: String): String? = null
 }
 
 /** what came of [Platform.translate] */
@@ -194,15 +196,34 @@ data class PlayOptions(
     val audioOnly: Boolean = false,
     /** the video codec to prefer where there is a choice: "" automatic, "h264", "vp9", "av1" */
     val codec: String = "",
+    /** the audio track to start with (one of the stream's languages, [Playback.audioLangFor]); null: the original */
+    val audioLang: String? = null,
     /** for the system media controls */
     val title: String = "",
     val artist: String = "",
     val artwork: String = "",
+    /**
+     * A swipeable feed (Shorts): when the next one replaces this video, the player keeps it ready for a swipe back
+     * (where it can, see [VideoPlayer.preload])
+     */
+    val keepReady: Boolean = false,
+    /**
+     * [VideoPlayer.preload] only: buffered ahead for a screen not open yet (the first Short, while Home shows); it waits
+     * through [VideoPlayer.stop] and other videos until it is played or another standby takes its place
+     */
+    val standby: Boolean = false,
 )
 
 interface VideoPlayer {
     val state: StateFlow<PlayerState>
     fun load(s: Stream, o: PlayOptions)
+    /**
+     * Shorts: the video that will most likely be loaded next, so the player can fetch and buffer it already; a
+     * [load] of it then shows its first frame at once. Players that can't hold a second video ignore it.
+     */
+    fun preload(s: Stream, o: PlayOptions) {}
+    /** lets go of what [preload] buffered except the videos in [keep] (and a [PlayOptions.standby] one) */
+    fun trimPreloads(keep: Collection<String>) {}
     fun play()
     fun pause()
     fun seekTo(ms: Long)

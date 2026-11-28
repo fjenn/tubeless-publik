@@ -39,6 +39,8 @@ object Sys {
         Locale.forLanguageTag(code).getDisplayName(Locale(lang)).ifEmpty { code }
 
     fun deviceLanguage(): String = Locale.getDefault().language
+    /** the system's languages, the first first (Java knows one: the default locale's) */
+    fun deviceLanguages(): List<String> = listOf(Locale.getDefault().language).filter { it.isNotEmpty() }
     fun deviceRegion(): String = Locale.getDefault().country
 
     fun <K : Any, V : Any> concurrentMap(): MutableMap<K, V> = ConcurrentHashMap()

@@ -67,6 +67,12 @@ fun MainViewController(hideBars: (Boolean) -> Unit): UIViewController {
     // `-search <query>` starts on its results, `-shorts` on the Shorts tab (the same simulator check)
     args.indexOf("-search").takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }?.let { q -> state.go(app.tubeless.ui.Screen.Search(q)) }
     if ("-shorts" in args) state.go(app.tubeless.ui.Screen.Shorts)
+    // `-shortsafter <ms>`: Home first, then the Shorts tab as a tap would (the cold "open Shorts" measurement)
+    args.indexOf("-shortsafter").takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }?.toLongOrNull()?.let { ms ->
+        state.scope.launch { kotlinx.coroutines.delay(ms); state.go(app.tubeless.ui.Screen.Shorts) }
+    }
+    // `-shortswipe <ms>`: Shorts moves to the next one by itself (the swipe-to-first-frame measurement)
+    args.indexOf("-shortswipe").takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }?.toLongOrNull()?.let { app.tubeless.ui.E2E.shortsSwipeMs = it }
     // `-go subs|library|music|settings|downloads|history|mobile`: starts on that page (S10's simulator screenshots)
     args.indexOf("-go").takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }?.let { p ->
         when (p) {

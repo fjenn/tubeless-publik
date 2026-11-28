@@ -211,6 +211,9 @@ object InnerTube {
         if (signed) onBehalfOf?.invoke()?.let { page -> put("user", buildJsonObject { put("onBehalfOfUser", page) }) }
     }
 
+    /** the golden tests: takes the request [call] would send (endpoint, body, headers) and answers it; null = the network */
+    @Volatile internal var sendHook: (suspend (String, JsonObject, Map<String, String>) -> String)? = null
+
     suspend fun call(endpoint: String, body: Map<String, Any?>, client: Client = Clients.WEB, auth: Boolean? = null): JsonElement {
         val signed = signs(client, endpoint, auth)
         val session = inSession(client, endpoint, auth)
@@ -228,6 +231,7 @@ object InnerTube {
         }
         val headers = headers(client, visitor, signed, session)
         val text = try {
+            sendHook?.let { h -> h(endpoint, payload, headers) } ?:
             Backoff.retry { Net.post("https://${client.host}/youtubei/v1/$endpoint?prettyPrint=false", payload.toString(), headers) }
         } catch (e: HttpError) {
             if (signed && e.code == 401) Accounts.sessionRejected()

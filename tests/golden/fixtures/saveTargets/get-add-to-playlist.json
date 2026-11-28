@@ -1,0 +1,59 @@
+{
+ "responseContext": {
+  "mainAppWebResponseContext": {
+   "loggedOut": false,
+   "datasyncId": "x||"
+  }
+ },
+ "contents": [
+  {
+   "addToPlaylistRenderer": {
+    "playlists": [
+     {
+      "playlistAddToOptionRenderer": {
+       "playlistId": "WL",
+       "title": {
+        "simpleText": "Watch later"
+       },
+       "containsSelectedVideos": "ALL",
+       "privacy": "PRIVATE"
+      }
+     },
+     {
+      "playlistAddToOptionRenderer": {
+       "playlistId": "PLmine1",
+       "title": {
+        "runs": [
+         {
+          "text": "Road trip"
+         }
+        ]
+       },
+       "containsSelectedVideos": "NONE",
+       "privacy": "UNLISTED"
+      }
+     },
+     {
+      "playlistAddToOptionRenderer": {
+       "playlistId": "PLmine2",
+       "title": {
+        "simpleText": "Cooking"
+       },
+       "containsSelectedVideos": "ALL",
+       "privacy": "PUBLIC"
+      }
+     }
+    ],
+    "actions": [
+     {
+      "addToPlaylistCreateRenderer": {
+       "buttonText": {
+        "simpleText": "Create new playlist"
+       }
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

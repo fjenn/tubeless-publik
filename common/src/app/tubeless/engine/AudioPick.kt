@@ -23,5 +23,28 @@ object AudioPick {
             ?: main.maxByOrNull { it.bitrate }
     }
 
+    /** the original language's track ("en-US"); null when YouTube doesn't say which one is the original */
+    fun originalLang(audio: List<Format>): String? =
+        (audio.firstOrNull { it.audioContent == "original" } ?: audio.firstOrNull { it.audioDefault && it.audioLang != null })?.audioLang
+
+    /**
+     * The language a video starts in, as YouTube does it: the original, unless the person speaks none of it and
+     * the video has a dub in one of their languages ([mine]: the app's language, then the device's list, in
+     * order); then the dub in the first of those that has one. [dubs] off (Settings → "Always original"): the
+     * original. A dub in a language the person doesn't have is never picked (AVPlayer, left to itself, took
+     * the first track of YouTube's list, Arabic, for anybody). null: one track only, or no known original.
+     */
+    fun preferred(audio: List<Format>, mine: List<String>, dubs: Boolean = true): String? {
+        val langs = audio.mapNotNull { it.audioLang }.distinct()
+        if (langs.size < 2) return null
+        val original = originalLang(audio) ?: return null
+        if (!dubs) return original
+        fun base(l: String) = l.substringBefore('-').lowercase()
+        val wanted = mine.map(::base).filter { it.isNotEmpty() }.distinct()
+        if (base(original) in wanted) return original
+        for (w in wanted) langs.firstOrNull { it != original && base(it) == w }?.let { return it }
+        return original
+    }
+
     private fun score(f: Format): Double = if (f.codecFamily == "opus") f.bitrate * 1.5 else f.bitrate.toDouble()
 }

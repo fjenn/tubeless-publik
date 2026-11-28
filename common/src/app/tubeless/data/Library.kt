@@ -80,6 +80,8 @@ data class Settings(
     val autoplay: Boolean = true,
     val captions: Boolean = false,
     val captionLang: String = "",
+    /** a video whose original language isn't one of yours starts in a dub in your language when it has one; off: always the original */
+    val dubs: Boolean = true,
     /** captions: text size in % (50..200), the box behind them in % opacity (0 = no box, an outline instead),
      *  and where they sit: 0 at the bottom, 1 a little higher, 2 at the top (#54) */
     val captionSize: Int = 100,

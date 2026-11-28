@@ -31,6 +31,9 @@ import app.tubeless.ui.PlayerState
 import app.tubeless.ui.VideoPlayer
 import kotlinx.cinterop.CValue
 import platform.AVFoundation.addOutput
+import platform.AVFoundation.tracksWithMediaType
+import platform.AVFoundation.extendedLanguageTag
+import platform.AVFoundation.languageCode
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.addressOf
@@ -60,6 +63,9 @@ import platform.AVFoundation.AVPlayerLayer
 import platform.AVFoundation.AVPlayerTimeControlStatusPlaying
 import platform.AVFoundation.AVPlayerTimeControlStatusWaitingToPlayAtSpecifiedRate
 import platform.AVFoundation.appliesMediaSelectionCriteriaAutomatically
+import platform.AVFoundation.assetCache
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
 import platform.AVFoundation.asset
 import platform.AVFoundation.audioTimePitchAlgorithm
 import platform.AVFoundation.currentItem
@@ -68,6 +74,9 @@ import platform.AVFoundation.duration
 import platform.AVFoundation.pause
 import platform.AVFoundation.playImmediatelyAtRate
 import platform.AVFoundation.preferredForwardBufferDuration
+import platform.AVFoundation.preferredPeakBitRate
+import platform.AVFoundation.prerollAtRate
+import platform.AVFoundation.currentMediaSelection
 import platform.AVFoundation.configuredTimeOffsetFromLive
 import platform.AVFoundation.automaticallyPreservesTimeOffsetFromLive
 import platform.AVFoundation.preferredMaximumResolution
@@ -96,10 +105,19 @@ import platform.UIKit.UIView
  * AVPlayer can't take a side-loaded track for HLS.
  */
 class IosPlayer : VideoPlayer {
+    private companion object {
+        /** the players waiting with a Short (see [Warm]) */
+        const val MAX_WARM = 3
+        /** a waiting Short's limits: about 720p of an upright Short, a few seconds */
+        const val WARM_PEAK = 2_000_000.0
+        const val WARM_AHEAD = 4.0
+    }
     private val st = MutableStateFlow(PlayerState())
     override val state: StateFlow<PlayerState> get() = st
 
-    val av = AVPlayer()
+    /** the player on screen; Shorts swap in a neighbour's already-buffered one (see [warm]) */
+    var av = AVPlayer()
+        private set
     private val scope = MainScope()
     private var stream: Stream? = null
     private var opts = PlayOptions()
@@ -112,8 +130,10 @@ class IosPlayer : VideoPlayer {
         pip?.startPictureInPicture()
     }
 
-    /** the original audio is chosen once per video, as soon as AVPlayer has read the list */
+    /** the sound is chosen once per video, as soon as AVFoundation has read the list (before it plays a piece of the wrong one) */
     private var audioPicked = false
+    /** the language to play ([PlayOptions.audioLang], then a pick from the sheet); null: the original */
+    private var audioWanted: String? = null
     private var heightsJob: Job? = null
     private var capsJob: Job? = null
     private var cues by mutableStateOf<List<Cue>>(emptyList())
@@ -189,7 +209,7 @@ class IosPlayer : VideoPlayer {
         }
         if (!audioPicked && item.status == AVPlayerItemStatusReadyToPlay) {
             audioPicked = true
-            pickOriginalAudio(item)
+            pickAudio(item)
         }
         val dur = secs(item.duration)
         val pos = secs(av.currentTime())
@@ -212,6 +232,32 @@ class IosPlayer : VideoPlayer {
             )
         }
         now(item)
+    }
+
+    private var startJob: Job? = null
+
+    /**
+     * Until the picture moves, the state is read every frame instead of every 250 ms: the spinner goes and the
+     * position starts the moment AVPlayer plays (a quarter second sooner on every swipe through Shorts).
+     */
+    private fun firstFrame(unlimit: AVPlayerItem? = null) {
+        startJob?.cancel()
+        startJob = scope.launch {
+            for (i in 0 until 600) {
+                delay(16)
+                tick()
+                if (st.value.playing && st.value.positionMs > 0) break
+            }
+            // a Short that waited small (see Warm): its limits go a moment after it moves, so AVPlayer climbs to what Auto
+            // allows; lifted at the swipe, AVPlayer changed variant before the first frame and the swipe waited ~1 s
+            if (unlimit != null) {
+                delay(1500)
+                if (av.currentItem === unlimit) {
+                    unlimit.preferredPeakBitRate = 0.0
+                    unlimit.preferredForwardBufferDuration = if (readAhead) 1200.0 else 0.0
+                }
+            }
+        }
     }
 
     private var nowTicks = 0
@@ -237,37 +283,176 @@ class IosPlayer : VideoPlayer {
         }
     }
 
-    override fun load(s: Stream, o: PlayOptions) {
-        stream = s
-        opts = o
-        val hls = s.hls
-        if (hls == null) {
-            st.value = PlayerState(videoId = s.id, error = "This video has no stream the iPad can play")
-            return
-        }
+    /** a video's item, set up as every load wants it, with its ambient-mode output; null without an HLS address */
+    private fun makeItem(s: Stream, o: PlayOptions): Pair<AVPlayerItem, platform.AVFoundation.AVPlayerItemVideoOutput>? {
+        val hls = s.hls ?: return null
         // from the connected server, the list and every piece need its login
         val headers = ServerVideo.headersFor(hls)
         val item = if (headers == null) AVPlayerItem(uRL = NSURL(string = hls))
             else AVPlayerItem(asset = AVURLAsset(uRL = NSURL(string = hls), options = mapOf<Any?, Any>("AVURLAssetHTTPHeaderFieldsKey" to headers)))
+        // a saved video is one local .mp4: AVPlayer reads the file and nothing else (the E2E log shows the address it got)
+        if (s.client == "offline") app.tubeless.ui.E2E.log("player_item", "videoId" to s.id, "scheme" to ((item.asset as? AVURLAsset)?.URL?.scheme ?: ""),
+            "file" to hls.substringAfterLast('/'))
         // a download plays the quality that was saved: a cap (e.g. the mobile-data one, which applies as soon as Wi-Fi is
         // gone) would make AVPlayer want a variant that isn't in the package and go to the network for it
-        if (s.client != "offline") limit(item, auto(o.maxHeight))
-        // speeds up to 4x (S5): the spectral time-pitch keeps voices natural over the whole range (the default stops sounding right past 2x)
-        item.audioTimePitchAlgorithm = platform.AVFoundation.AVAudioTimePitchAlgorithmSpectral
+        if (s.client != "offline") limit(item, auto(o.maxHeight, s))
+        item.audioTimePitchAlgorithm = pitchFor(o.speed)
         if (readAhead) item.preferredForwardBufferDuration = 1200.0
         // live: 8 s behind the edge (two segments), kept there
         if (s.live) { item.configuredTimeOffsetFromLive = CMTimeMake(8_000, 1000); item.automaticallyPreservesTimeOffsetFromLive = true }
         // ambient mode: small copies of the picture are read from here (frame())
         val out = platform.AVFoundation.AVPlayerItemVideoOutput(pixelBufferAttributes = null)
         item.addOutput(out)
-        frames = out
-        av.replaceCurrentItemWithPlayerItem(item)
+        return item to out
+    }
+
+    /**
+     * Shorts' neighbours, each loading in a muted, paused AVPlayer of its own that nobody sees: the next one (preload)
+     * and the one just swiped away (keepReady). A swipe makes that player [av] and shows it in the one picture layer, so
+     * the first frame comes at once instead of after the list, the first pieces and the decoder's start (about 2.5 s a
+     * swipe on the simulator before). The player moves, not its item: AVFoundation refuses an item that has been in
+     * another player (an exception, the app gone). [MAX_WARM] at most (the next two and the one before, as YouTube's app):
+     * the oldest goes when another comes. A [Warm.standby] one (the first Short, buffered while Home shows) comes on top
+     * and waits through [stop], [trimPreloads] and other videos until it is played or another standby replaces it.
+     *
+     * A waiting item starts small (YouTube does the same): at most [WARM_PEAK] bits/s and [WARM_AHEAD] seconds ahead,
+     * so the next two are ready quickly and don't take the connection from the one playing; a moment after it moves on
+     * screen both limits go and AVPlayer climbs to the quality Auto allows (see [firstFrame]).
+     */
+    private class Warm(val stream: Stream, val item: AVPlayerItem, val out: platform.AVFoundation.AVPlayerItemVideoOutput, val player: AVPlayer,
+        val standby: Boolean = false)
+    private val warm = ArrayList<Warm>()
+
+    private fun keepWarm(w: Warm) {
+        if (w.standby) warm.filter { it.standby }.forEach { release(it) }
+        warm.add(w)
+        while (warm.count { !it.standby } > MAX_WARM) release(warm.first { !it.standby })
+    }
+
+    private fun release(w: Warm) {
+        warm.remove(w)
+        w.player.pause()
+        w.player.replaceCurrentItemWithPlayerItem(null)
+    }
+
+    private fun idlePlayer(): AVPlayer = AVPlayer().also {
+        it.muted = true
+        it.appliesMediaSelectionCriteriaAutomatically = false
+    }
+
+    /** [p] becomes the player on screen, sounding as [old] did */
+    private fun swapTo(p: AVPlayer, old: AVPlayer) {
+        p.muted = old.muted
+        av = p
+        picture.show(p)
+    }
+
+    /** the waiting players go, but a [Warm.standby] one unless [all] */
+    private fun dropWarm(all: Boolean = false) {
+        warm.filter { all || !it.standby }.forEach { release(it) }
+    }
+
+    override fun trimPreloads(keep: Collection<String>) {
+        warm.filter { !it.standby && it.stream.id !in keep }.forEach { release(it) }
+    }
+
+    override fun preload(s: Stream, o: PlayOptions) {
+        if (stream?.id == s.id || s.client == "offline") return
+        warm.firstOrNull { it.stream.id == s.id }?.let { warm.remove(it); warm.add(it); return }
+        val (item, out) = makeItem(s, o) ?: return
+        item.preferredPeakBitRate = WARM_PEAK
+        item.preferredForwardBufferDuration = WARM_AHEAD
+        val p = idlePlayer()
+        val w = Warm(s, item, out, p, standby = o.standby)
+        keepWarm(w)
+        // its sound chosen before it buffers (the list's first track is often a dub: see pickAudio), and only then given
+        // to its player: a choice made after the start threw away the sound read so far and read the right one again
+        // (Shorts with 8–21 dubs waited 2–4 s on the swipe). load() keeps that choice.
+        item.asset.loadValuesAsynchronouslyForKeys(listOf("availableMediaCharacteristicsWithMediaSelectionOptions")) {
+            dispatch_async(dispatch_get_main_queue()) {
+                item.asset.mediaSelectionGroupForMediaCharacteristic(AVMediaCharacteristicAudible)?.let { group ->
+                    val options = group.options.filterIsInstance<AVMediaSelectionOption>()
+                    app.tubeless.ui.audioOption(options, o.audioLang, s.audio)?.let { item.selectMediaOption(it, inMediaSelectionGroup = group) }
+                }
+                if (w in warm) attach(w)
+            }
+        }
+    }
+
+    /**
+     * A waiting Short's item goes into its player: a paused player still reads it (the lists and the first seconds come
+     * in), and once it is ready a preroll starts the decoders, so play() shows the first frame without waiting for them.
+     */
+    private fun attach(w: Warm) {
+        if (w.player.currentItem === w.item) return
+        w.player.replaceCurrentItemWithPlayerItem(w.item)
+        scope.launch {
+            repeat(200) {
+                delay(50)
+                if (w.player.currentItem !== w.item || w.player.rate != 0f || w !in warm) return@launch
+                if (w.item.status == AVPlayerItemStatusReadyToPlay) { w.player.prerollAtRate(1f, null); return@launch }
+                if (w.item.status == AVPlayerItemStatusFailed) return@launch
+            }
+        }
+    }
+
+    override fun load(s: Stream, o: PlayOptions) {
+        val before = stream
+        val beforeItem = av.currentItem
+        val beforeOut = frames
+        val keep = opts.keepReady && o.keepReady
+        stream = s
+        opts = o
+        if (s.hls == null) {
+            st.value = PlayerState(videoId = s.id, error = "This video has no stream the iPad can play")
+            return
+        }
+        val ready = warm.firstOrNull { it.stream.id == s.id }
+        val old = av
+        val park = keep && before != null && beforeItem != null && before.id != s.id && beforeOut != null
+        if (ready != null) {
+            warm.remove(ready)
+            // swiped to before its sound was chosen: it starts now, as it is
+            if (ready.player.currentItem !== ready.item) ready.player.replaceCurrentItemWithPlayerItem(ready.item)
+            // its own player comes on screen, from the start (as YouTube plays a Short again); one that never played is
+            // there already, and a seek would throw away what it buffered
+            if (secs(ready.item.currentTime()) > 0.05) ready.item.seekToTime(CMTimeMake(0, 1000))
+            frames = ready.out
+            swapTo(ready.player, old)
+        } else {
+            val (item, out) = makeItem(s, o) ?: return
+            frames = out
+            // the one going away stays with its item for a swipe back: this one gets a player of its own
+            if (park) swapTo(idlePlayer(), old)
+            av.replaceCurrentItemWithPlayerItem(item)
+        }
+        // the Short swiped away waits, ready, for a swipe back; anything else lets the waiting ones go
+        if (park) {
+            old.pause()
+            old.muted = true
+            keepWarm(Warm(before!!, beforeItem!!, beforeOut!!, old))
+            // the one swiped away waits small too
+            beforeItem.preferredForwardBufferDuration = WARM_AHEAD
+        } else {
+            if (av !== old) { old.pause(); old.replaceCurrentItemWithPlayerItem(null) }
+            if (!o.keepReady) dropWarm()
+        }
+        val hls = s.hls ?: return
         gain()
         audioPicked = false
         startAt = o.startMs
         st.value = PlayerState(videoId = s.id, buffering = true, positionMs = o.startMs, durationMs = s.lengthSec * 1000L,
             speed = o.speed, captions = o.captions)
+        audioWanted = o.audioLang
+        val item = av.currentItem ?: return
+        // the sound is chosen as soon as the list is read, before AVPlayer has played (or, offline, waited for) the first one in it
+        item.asset.loadValuesAsynchronouslyForKeys(listOf("availableMediaCharacteristicsWithMediaSelectionOptions")) {
+            dispatch_async(dispatch_get_main_queue()) {
+                if (av.currentItem === item && !audioPicked) { audioPicked = true; pickAudio(item) }
+            }
+        }
         if (o.autoplay) av.playImmediatelyAtRate(o.speed) else av.pause()
+        firstFrame(unlimit = ready?.item)
         // the qualities on offer, from the HLS master list
         variants = emptyMap()
         heightsJob?.cancel()
@@ -288,17 +473,47 @@ class IosPlayer : VideoPlayer {
         captions(o.captions, translate)
     }
 
-    /** the original language's audio track (from the stream's formats), else the list's default */
-    private fun pickOriginalAudio(item: AVPlayerItem) {
-        val group = item.asset.mediaSelectionGroupForMediaCharacteristic(AVMediaCharacteristicAudible) ?: return
-        val options = group.options.filterIsInstance<AVMediaSelectionOption>()
-        if (options.size < 2) return
+    /**
+     * The sound to play: [audioWanted], else the original (app.tubeless.ui.audioOption). YouTube's HLS lists mark
+     * none as the default, and with the automatic choice off AVPlayer took the first, an Arabic dub. A saved video
+     * chooses only among the sounds in its package: one that isn't there AVPlayer fetches from YouTube (a saved
+     * video streamed), or, offline, waits for for ever. The tracks go to the player sheet as language to name.
+     */
+    private fun pickAudio(item: AVPlayerItem) {
+        val group = item.asset.mediaSelectionGroupForMediaCharacteristic(AVMediaCharacteristicAudible) ?: return savedSound(item)
+        val all = group.options.filterIsInstance<AVMediaSelectionOption>()
+        val saved = if (stream?.client != "offline") null
+            else (item.asset as? AVURLAsset)?.assetCache?.mediaSelectionOptionsInMediaSelectionGroup(group)?.filterIsInstance<AVMediaSelectionOption>()
+        val options = saved?.ifEmpty { null } ?: all
+        if (options.isEmpty()) return
         val audio = stream?.audio.orEmpty()
-        val lang = (audio.firstOrNull { it.audioContent == "original" } ?: audio.firstOrNull { it.audioDefault && it.audioLang != null })
-            ?.audioLang?.substringBefore('-')?.lowercase()
-        val pick = lang?.let { l -> options.firstOrNull { it.extendedLanguageTag?.substringBefore('-')?.lowercase() == l } }
-            ?: group.defaultOption ?: return
-        item.selectMediaOption(pick, inMediaSelectionGroup = group)
+        val pick = app.tubeless.ui.audioOption(options, audioWanted, audio) ?: group.defaultOption?.takeIf { it in options } ?: options.first()
+        // the same one again (chosen while it waited, see preload) is left alone: a new choice can throw away the buffer
+        if (item.currentMediaSelection.selectedMediaOptionInMediaSelectionGroup(group) != pick) item.selectMediaOption(pick, inMediaSelectionGroup = group)
+        fun key(o: AVMediaSelectionOption): String = o.extendedLanguageTag.let { t -> audio.firstOrNull { it.audioLang.equals(t, true) }?.audioLang ?: t ?: "" }
+        val tracks = options.map { o -> key(o) to (audio.firstOrNull { it.audioLang.equals(key(o), true) }?.audioTrackName ?: app.tubeless.ui.hlsName(o)) }
+            .filter { it.first.isNotEmpty() }.distinctBy { it.first }
+        st.update { it.copy(audioTracks = if (tracks.size > 1) tracks else emptyList(), audioTrack = key(pick).ifEmpty { null }) }
+        app.tubeless.ui.E2E.log("audio_pick", "videoId" to (stream?.id ?: ""), "lang" to key(pick), "name" to app.tubeless.ui.hlsName(pick),
+            "offline" to (saved != null), "choices" to options.size)
+    }
+
+    /** a saved video's one sound (its .mp4 has a single audio track, in the language chosen when it was saved) */
+    private fun savedSound(item: AVPlayerItem) {
+        val s = stream ?: return
+        if (s.client != "offline") return
+        val a = s.audio.firstOrNull()
+        val lang = a?.audioLang ?: ""
+        val track = item.asset.tracksWithMediaType(platform.AVFoundation.AVMediaTypeAudio).firstOrNull() as? platform.AVFoundation.AVAssetTrack
+        st.update { it.copy(audioTracks = emptyList(), audioTrack = lang.ifEmpty { null }) }
+        app.tubeless.ui.E2E.log("audio_pick", "videoId" to s.id, "lang" to lang, "name" to (a?.audioTrackName ?: ""), "offline" to true, "choices" to 1,
+            "fileLang" to (track?.extendedLanguageTag ?: track?.languageCode ?: ""))
+    }
+
+    override fun setAudioTrack(lang: String) {
+        audioWanted = lang
+        val item = av.currentItem ?: return
+        if (audioPicked) pickAudio(item)
     }
 
     /**
@@ -307,10 +522,10 @@ class IosPlayer : VideoPlayer {
      * picked by hand as it is
      */
     @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-    private fun auto(cap: Int): Int {
+    private fun auto(cap: Int, s: Stream? = stream): Int {
         if (cap != app.tubeless.engine.Quality.AUTO) return cap
         val (w, h) = platform.UIKit.UIScreen.mainScreen.nativeBounds.useContents { size.width.toInt() to size.height.toInt() }
-        val sizes = stream?.video.orEmpty().map { it.width to it.height }.distinct()
+        val sizes = s?.video.orEmpty().map { it.width to it.height }.distinct()
         return app.tubeless.engine.Quality.fit(w, h, sizes).takeIf { it > 0 } ?: 0
     }
 
@@ -371,7 +586,16 @@ class IosPlayer : VideoPlayer {
         st.update { it.copy(positionMs = to, ended = false) }
     }
 
+    /**
+     * How the sound keeps its pitch at a speed. Spectral (a phase vocoder) smears voices into an echo, which is what
+     * people heard at 1.25-2x; time-domain (WSOLA, what YouTube's player does) keeps speech dry and natural up to 2x.
+     * Past that, where time-domain starts to stutter, spectral is the better of the two.
+     */
+    private fun pitchFor(speed: Float) =
+        if (speed <= 2f) platform.AVFoundation.AVAudioTimePitchAlgorithmTimeDomain else platform.AVFoundation.AVAudioTimePitchAlgorithmSpectral
+
     override fun setSpeed(x: Float) {
+        av.currentItem?.audioTimePitchAlgorithm = pitchFor(x)
         opts = opts.copy(speed = x)
         if (av.rate > 0f) av.rate = x
         st.update { it.copy(speed = x) }
@@ -414,6 +638,7 @@ class IosPlayer : VideoPlayer {
     override fun stop() {
         av.pause()
         av.replaceCurrentItemWithPlayerItem(null)
+        dropWarm()
         heightsJob?.cancel(); capsJob?.cancel()
         stream = null
         startAt = -1
@@ -476,6 +701,14 @@ private class PlayerHost(private val moved: (PlayerHost, Boolean) -> Unit) : UIV
  */
 private class PlayerView(player: AVPlayer) : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0)) {
     private val picture = AVPlayerLayer.playerLayerWithPlayer(player)
+
+    /** another player's picture in the same layer (and the same picture-in-picture controller) */
+    fun show(p: AVPlayer) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        picture.player = p
+        CATransaction.commit()
+    }
     val pip: AVPictureInPictureController? =
         if (AVPictureInPictureController.isPictureInPictureSupported()) AVPictureInPictureController(playerLayer = picture) else null
 

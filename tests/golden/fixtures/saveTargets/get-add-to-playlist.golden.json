@@ -1,0 +1,20 @@
+[
+  {
+    "@type": "SaveTarget",
+    "id": "WL",
+    "title": "Watch later",
+    "has": true
+  },
+  {
+    "@type": "SaveTarget",
+    "id": "PLmine1",
+    "title": "Road trip",
+    "has": false
+  },
+  {
+    "@type": "SaveTarget",
+    "id": "PLmine2",
+    "title": "Cooking",
+    "has": true
+  }
+]

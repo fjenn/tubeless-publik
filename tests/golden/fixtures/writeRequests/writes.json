@@ -1,0 +1,80 @@
+{
+ "answer": {
+  "responseContext": {
+   "mainAppWebResponseContext": {
+    "loggedOut": false,
+    "datasyncId": "x||"
+   }
+  },
+  "actions": [
+   {
+    "openPopupAction": {
+     "popup": {
+      "notificationActionRenderer": {
+       "responseText": {
+        "runs": [
+         {
+          "text": "Added to Liked videos"
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "calls": [
+  [
+   "like",
+   "dQw4w9WgXcQ",
+   "Cg0KC2RRdzR3OVdnWGNRIAAoAA%3D%3D"
+  ],
+  [
+   "dislike",
+   "dQw4w9WgXcQ",
+   null
+  ],
+  [
+   "removeLike",
+   "dQw4w9WgXcQ",
+   "Cg0KC2RRdzR3OVdnWGNR"
+  ],
+  [
+   "subscribe",
+   "UCuAXFkgsw1L7xaCfnd5JJOw"
+  ],
+  [
+   "unsubscribe",
+   "UCuAXFkgsw1L7xaCfnd5JJOw"
+  ],
+  [
+   "addTo",
+   "WL",
+   "dQw4w9WgXcQ"
+  ],
+  [
+   "removeFrom",
+   "PLmine1",
+   "dQw4w9WgXcQ"
+  ],
+  [
+   "postComment",
+   "Eg0SC2RRdzR3OVdnWGNRKgIIAFAB",
+   "Nice one"
+  ],
+  [
+   "reply",
+   "EgZqdXN0SWQiC2RRdzR3OVdnWGNRKgIIAA%3D%3D",
+   "Agreed"
+  ],
+  [
+   "commentAction",
+   "ENUMS_LIKE_ACTION_TOKEN"
+  ],
+  [
+   "saveTargets",
+   "dQw4w9WgXcQ"
+  ]
+ ]
+}

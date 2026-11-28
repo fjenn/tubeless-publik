@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -94,6 +95,7 @@ import app.tubeless.engine.Comment
 import app.tubeless.engine.Playlist
 import app.tubeless.engine.Video
 import app.tubeless.engine.YouTube
+import app.tubeless.engine.YouTubeAccount
 import app.tubeless.rec.Learn
 import kotlinx.coroutines.launch
 
@@ -264,16 +266,17 @@ private fun PlayerBox(
     val ambient = app.store.settings.state.collectAsState().value.ambient && MaterialTheme.colorScheme.background.luminance() < 0.3f
     var glow by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(ambient && showing, st.videoId) {
-        glow = null
+        glow = null; AmbientFrame.now = null
         if (!ambient || !showing) return@LaunchedEffect
         while (true) {
-            app.player.frame()?.let { glow = it }
+            app.player.frame()?.let { glow = it; AmbientFrame.now = it }
             // paused: the picture only changes when you seek
             delay(if (app.player.state.value.playing) 1000 else 2500)
         }
     }
     Box(
-        (sheet ?: Modifier.fillMaxWidth().aspectRatio(16f / 9f)).ambientGlow(glow).background(Color.Black)
+        // (the phone's watch sheet draws the glow under the page itself: from here it lay over the title)
+        (sheet ?: Modifier.fillMaxWidth().aspectRatio(16f / 9f)).ambientGlow(if (sheet == null) glow else null).background(Color.Black)
             // touch screens: swipe the video down to keep it playing in the mini player and go back,
             // up to watch it full screen (#64)
             .pointerInput(touch, sheet != null) {
@@ -351,6 +354,9 @@ private fun PlayerNotes(app: AppState) {
 
 /** the sound problems already told about in this run (each once, not again with every video) */
 private object SoundNote { val told = HashSet<String>() }
+
+/** the last frame Ambient mode took from the video, for the phone's watch sheet to draw under its page */
+private object AmbientFrame { var now by mutableStateOf<ImageBitmap?>(null) }
 
 /**
  * Draws [frame] (a small blurred picture of the video) stretched past the edges of what follows,
@@ -506,7 +512,7 @@ private fun Info(app: AppState, v: Video, flush: Boolean = false) {
 @Composable
 private fun DescriptionSheet(app: AppState, v: Video, viewsText: String, onClose: () -> Unit) {
     // open all the way at once, as the player's settings sheet does
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
         DescriptionBody(app, v, viewsText, onClose)
     }
@@ -542,7 +548,7 @@ internal fun DescriptionBody(app: AppState, v: Video, viewsText: String = "", on
             if (desc.isNotEmpty()) SelectableInSheet(app) {
                 LinkedText(desc, app,
                     Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 24.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)).padding(12.dp),
+                        .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp)).padding(12.dp),
                     onTime = { s -> app.player.seekTo(s * 1000L); onClose() })
             }
         }
@@ -641,7 +647,16 @@ private fun Actions(app: AppState, v: Video, has: (String) -> Boolean, web: Bool
         if (pick) PlaylistPicker(v, app) { pick = false }
         return
     }
-    LazyRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // a phone: the row runs to the screen's edges as it scrolls (cut at the page's margin, "Download" ended mid-word)
+    val bleed = if (LocalCompact.current) 12.dp else 0.dp
+    LazyRow(
+        Modifier.padding(top = 12.dp).layout { m, c ->
+            val extra = (bleed * 2).roundToPx()
+            val p = m.measure(if (c.hasBoundedWidth) c.copy(minWidth = c.maxWidth + extra, maxWidth = c.maxWidth + extra) else c)
+            layout(if (c.hasBoundedWidth) c.maxWidth else p.width, p.height) { p.place(-extra / 2, 0) }
+        },
+        contentPadding = PaddingValues(horizontal = bleed), horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         if (has("likes")) item {
           Box(Modifier.clip(RoundedCornerShape(20.dp))) {
             Row(Modifier.height(36.dp).background(MaterialTheme.colorScheme.surfaceVariant),
@@ -923,9 +938,16 @@ private fun CommentView(app: AppState, c: Comment, reply: Boolean = false) {
             // as YouTube: Translate and the likes right under the text, then the replies as a small blue
             // button with an arrow that turns when they open (a full-height text button left a gap above)
             val lang = L.lang
-            val canTr = app.platform.canTranslate && remember(c.text, lang) { !needsNoTranslation(c.text, lang) }
+            // as YouTube: only under a comment in another language (the device tells, where it can)
+            val canTr = app.platform.canTranslate && remember(c.text, lang) {
+                !needsNoTranslation(c.text, lang) && app.platform.textLanguage(c.text)?.substringBefore('-') != lang.substringBefore('-')
+            }
             val likes = !calm && c.likes.isNotEmpty()
-            if (canTr || likes) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            // signed in: the comment's own like and reply, from the same comments page (YouTubeAccount.noteComments)
+            val acts = if (app.feedSource.signedIn) YouTubeAccount.commentActions(c.id) else null
+            var liked by remember(c.id, acts) { mutableStateOf(acts?.liked == true) }
+            var replying by remember(c.id) { mutableStateOf(false) }
+            if (canTr || likes || acts != null) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (canTr) {
                     val scope = rememberCoroutineScope()
                     val busy = app.translations.busy(c.id)
@@ -939,11 +961,33 @@ private fun CommentView(app: AppState, c: Comment, reply: Boolean = false) {
                     )
                     if (likes) Spacer(Modifier.width(16.dp))
                 }
-                if (likes) {
-                    Icon(Sym.ThumbUp.outline, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(c.likes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
+                val likeAction = if (liked) acts?.unlike else acts?.like
+                if (likes || likeAction != null) {
+                    val scope = rememberCoroutineScope()
+                    Row(
+                        (if (likeAction == null) Modifier else Modifier.clip(RoundedCornerShape(12.dp)).clickable {
+                            // shown at once, put back with a toast when the account didn't take it
+                            liked = !liked
+                            scope.launch {
+                                if (!runCatching { YouTubeAccount.commentAction(likeAction) }.getOrDefault(false)) {
+                                    liked = !liked
+                                    app.toast(tr("Couldn't update the like on your YouTube account"))
+                                }
+                            }
+                        }).padding(vertical = 4.dp, horizontal = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(if (liked) Sym.ThumbUp.fill else Sym.ThumbUp.outline, tr("Like"), Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (likes) Text(c.likes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
+                    }
                 }
+                if (acts?.replyParams != null) Text(
+                    tr("Reply"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp).clickable { replying = !replying }.padding(vertical = 4.dp),
+                )
             }
+            val rp = acts?.replyParams
+            if (replying && rp != null) ReplyBox(app, rp) { replying = false }
             if (c.replies > 0 && c.repliesToken != null) {
                 val turn by androidx.compose.animation.core.animateFloatAsState(if (showReplies) -90f else 90f, tween(Motion.SHORT))
                 Row(
@@ -1116,6 +1160,9 @@ fun WatchSheet(app: AppState, expanded: Boolean, barPx: Int) {
                 .pointerInput(Unit) { detectTapGestures { } },
         ) {
             if (LocalLook.current == 3) Backdrop(v.thumb, Modifier.fillMaxWidth().height(560.dp))
+            // Ambient mode's glow, behind what is under the video (the title stays sharp and white)
+            if (!app.fullscreen) Box(Modifier.offset { androidx.compose.ui.unit.IntOffset(0, top) }
+                .size(with(d) { w.toDp() }, with(d) { videoH.toDp() }).ambientGlow(AmbientFrame.now))
         }
         // what is under the video: comes along down and fades out early
         if (!mini) Box(

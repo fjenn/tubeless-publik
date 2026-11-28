@@ -103,6 +103,13 @@ class IosPlatform : Platform {
     // comment translation: the Swift side's (App.swift), iOS 18+
     override val canTranslate get() = CommentTranslation.translator != null
     override suspend fun translate(text: String, target: String) = CommentTranslation.translate(text, target)
+    override fun textLanguage(text: String): String? {
+        val r = platform.NaturalLanguage.NLLanguageRecognizer()
+        r.processString(text)
+        val best = r.languageHypothesesWithMaximum(1u).entries.firstOrNull() ?: return null
+        // only a sure guess hides the link (short comments are often guessed wrong)
+        return (best.key as? String)?.takeIf { ((best.value as? Number)?.toDouble() ?: 0.0) >= 0.85 }
+    }
 
     override fun share(title: String, url: String): Boolean {
         present(UIActivityViewController(activityItems = listOf(url), applicationActivities = null))

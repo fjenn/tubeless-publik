@@ -120,6 +120,8 @@ class WebPlayer : VideoPlayer {
             if (err.isNotEmpty()) { s.update { it.copy(error = err, buffering = false) }; return@launch }
             setSpeed(o.speed)
             setLoop(o.loop)
+            // the language Playback chose (the original, or a dub in yours: AudioPick.preferred)
+            o.audioLang?.let { jsAudio(it) }
             readTracks()
             if (o.captions != null) setCaptions(o.captions, o.captionLang)
         }

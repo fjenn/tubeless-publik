@@ -42,6 +42,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -375,7 +376,9 @@ private fun Shell(app: AppState) {
                 // (the sheet's mini player floats over the page in a corner: no room is kept for it)
                 Box(Modifier.onSizeChanged { barPx = it.height }) {
                     // the phone's tabs stay put while scrolling, as YouTube's app (only the top bar slides away)
-                    if (compact && cur !is Screen.Watch && cur !is Screen.NowPlaying) PhoneTabBar(app, root)
+                    // (not over the keyboard while typing a search: YouTube's app gives the suggestions that room)
+                    val typing = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(dens) > 0
+                    if (compact && cur !is Screen.Watch && cur !is Screen.NowPlaying && !typing) PhoneTabBar(app, root)
                 }
             }
         },

@@ -351,6 +351,8 @@ object YouTube {
     /** One page of comments, or of replies when [token] is a thread's replies token. */
     suspend fun comments(token: String): Page<Comment> {
         val d = InnerTube.call("next", mapOf("continuation" to token))
+        // signed in, the same answer carries each comment's like and reply actions
+        YouTubeAccount.noteComments(d)
         val payloads = HashMap<String, JsonElement>()
         for (m in d.at("frameworkUpdates.entityBatchUpdate.mutations").arr) {
             val p = m.at("payload.commentEntityPayload") ?: continue

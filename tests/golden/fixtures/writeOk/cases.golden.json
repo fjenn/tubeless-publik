@@ -1,0 +1,11 @@
+{
+  "like_done": true,
+  "subscribe_done": true,
+  "comment_done": true,
+  "signed_out_answer": false,
+  "sign_in_dialog": false,
+  "error": false,
+  "error_alert": false,
+  "comment_failed": false,
+  "feedback_not_processed": false
+}

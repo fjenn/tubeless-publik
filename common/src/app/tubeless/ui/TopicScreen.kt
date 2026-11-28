@@ -114,6 +114,8 @@ fun TopTabs(app: AppState) {
             val all = acct.firstOrNull()
             Chip(on == null, onClick = { app.rec.pickChip(null); HomeCtl.changed() }, label = all?.title ?: tr("All"))
             acct.drop(1).forEach { c -> Chip(c.title == on, onClick = { app.rec.pickChip(c); HomeCtl.changed() }, label = c.title) }
+            // YouTube gave no chips (a new visitor's Home, the popular stand-in): its topic pages instead of a lone "All"
+            if (acct.size <= 1) for (k in TOPICS.keys) Chip(false, onClick = { app.go(Screen.Topic(k)) }, label = tr(k))
         } else {
         screens.forEachIndexed { i, (s, label) -> TopTab(i == open, label) { app.go(s) } }
         if (discover) Box {

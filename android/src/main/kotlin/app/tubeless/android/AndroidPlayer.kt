@@ -318,8 +318,8 @@ class AndroidPlayer(private val ctx: Context) : VideoPlayer {
     }
 
     override fun load(s: Stream, o: PlayOptions) {
-        // the same video again (fresh stream URLs) keeps the language you picked
-        val audioLang = exo.trackSelectionParameters.preferredAudioLanguages.firstOrNull()?.takeIf { stream?.id == s.id }
+        // the language Playback chose (the original, or a dub in yours: AudioPick.preferred); the same video again (fresh stream URLs) keeps its own
+        val audioLang = o.audioLang ?: exo.trackSelectionParameters.preferredAudioLanguages.firstOrNull()?.takeIf { stream?.id == s.id }
         stream = s
         opts = o
         caption = o.captions

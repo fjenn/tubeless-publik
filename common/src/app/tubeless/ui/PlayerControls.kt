@@ -654,6 +654,7 @@ private fun Controls(app: AppState, fullscreen: Boolean, sideGestures: Boolean) 
             else MouseOverlay(app, st, fullscreen, dragging, { dragging = it; poke++ }, { dragging = null }, settings, { settings = it; poke++ }, playFocus.takeIf { tv }) { inBar = it }
         }
         SponsorPill(app, lifted = shown || st.ended || !st.playing)
+        DubPill(app, st, shown = shown || !st.playing)
         JumpAheadPill(app, lifted = shown || st.ended || !st.playing)
         if (Perks.shortcuts) ShortcutsCard()
         if (zoomNote > 0) {
@@ -681,7 +682,7 @@ private fun Controls(app: AppState, fullscreen: Boolean, sideGestures: Boolean) 
     }
     if (touch && settings) {
         // opened all the way and scrolling: a phone held sideways has room for only a few rows
-        ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) { SettingsPages(app) { settings = false } }
         }
     }
@@ -1025,7 +1026,7 @@ internal fun ChaptersSheet(app: AppState, onClose: () -> Unit) {
     val pos = player.state.collectAsState().value.positionMs
     val chapters = app.playback.chapters
     val now = chapters.lastOrNull { it.startMs <= pos }
-    ModalBottomSheet(onDismissRequest = onClose) {
+    ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = onClose) {
         Text(tr("Chapters"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         LazyColumn(Modifier.fillMaxWidth()) {
             items(chapters) { c ->
@@ -1261,6 +1262,52 @@ internal fun BoxScope.SponsorPill(app: AppState, lifted: Boolean) {
     }
 }
 
+/** two audio languages are the same track ("en-US", ExoPlayer's "en-us") */
+internal fun sameLang(a: String?, b: String?) = a != null && b != null && a.equals(b, ignoreCase = true)
+
+/**
+ * An audio track's name in the player sheet, as YouTube's: "English (US) (original)", "Spanish (auto-dubbed)" where
+ * YouTube marks the dub as made by its AI, else the language alone. The players' names come with YouTube's own
+ * words in them ("English (US) original", "Español - dubbed"): those are taken off and the marks put back the same way.
+ */
+internal fun audioTrackLabel(lang: String, name: String, audio: List<app.tubeless.engine.Format>): String {
+    val kind = audio.firstOrNull { sameLang(it.audioLang, lang) }?.audioContent
+        ?: when { name.endsWith("original", true) -> "original"; else -> null }
+    val base = name.replace(Regex("\\s*[-(]?\\s*(original|auto-dubbed|dubbed-auto|dubbed)\\)?\\s*$", RegexOption.IGNORE_CASE), "").ifEmpty { name }
+    return when (kind) {
+        "original" -> base + " (" + tr("original") + ")"
+        "dubbed-auto" -> base + " (" + tr("auto-dubbed") + ")"
+        else -> base
+    }
+}
+
+/**
+ * A dub playing (picked for your language, or by hand): a small note on the video, as YouTube's "Auto-dubbed"
+ * chip, and one tap on it goes back to the original. Shown with the controls, and for the first seconds.
+ */
+@Composable
+internal fun BoxScope.DubPill(app: AppState, st: PlayerState, shown: Boolean) {
+    val audio = app.playback.stream?.takeIf { it.id == st.videoId }?.audio ?: return
+    val orig = AudioPick.originalLang(audio) ?: return
+    val now = st.audioTrack ?: return
+    if (st.audioTracks.size < 2 || sameLang(now, orig)) return
+    var fresh by remember(st.videoId, now) { mutableStateOf(true) }
+    LaunchedEffect(st.videoId, now) { delay(5000); fresh = false }
+    if (!shown && !fresh) return
+    val auto = audio.firstOrNull { sameLang(it.audioLang, now) }?.audioContent == "dubbed-auto"
+    Row(
+        Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 52.dp)
+            .clip(RoundedCornerShape(18.dp)).background(Color(0xD91F1F1F)).border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(18.dp))
+            .clickable { app.playback.pickAudio(orig) }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Sym.Language.outline, null, tint = Color.White, modifier = Modifier.size(16.dp))
+        Text(" " + tr(if (auto) "Auto-dubbed" else "Dubbed"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text("   " + tr("Play original"), color = Color(0xFF3EA6FF), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
 private val HEAT_H = 36.dp
 
 /** the wave through the slices' middles: flat curves between them, as YouTube draws it */
@@ -1309,7 +1356,7 @@ internal fun ColumnScope.SettingsPages(app: AppState, pageState: androidx.compos
                 Perks.update { it.copy(voiceBoost = on) }; E2E.log("voice_boost", "on" to on)
             }
             if (st.audioTracks.size > 1) {
-                SheetRow(Sym.Language.outline, tr("Audio track"), st.audioTracks.firstOrNull { it.first == st.audioTrack }?.second ?: "") { page = "a" }
+                SheetRow(Sym.Language.outline, tr("Audio track"), st.audioTracks.firstOrNull { sameLang(it.first, st.audioTrack) }?.let { (l, n) -> audioTrackLabel(l, n, pb.stream?.audio.orEmpty()) } ?: "") { page = "a" }
             }
             if (!pb.stream?.captions.isNullOrEmpty()) {
                 SheetRow(Sym.ClosedCaption.outline, tr("Subtitles/CC"), st.captions?.let { c -> st.captionsTranslated?.let { l -> tr("Auto-translate") + " (" + langName(l) + ")" } ?: c.name } ?: tr("Off")) { page = "c" }
@@ -1421,7 +1468,11 @@ internal fun ColumnScope.SettingsPages(app: AppState, pageState: androidx.compos
         }
         "a" -> {
             PageTitle(tr("Audio track")) { page = "" }
-            for ((lang, name) in st.audioTracks) Pick(name, st.audioTrack == lang) { player.setAudioTrack(lang); dismiss() }
+            // the original first, as YouTube lists them
+            val audio = app.playback.stream?.audio.orEmpty()
+            val orig = AudioPick.originalLang(audio)
+            for ((lang, name) in st.audioTracks.sortedBy { if (sameLang(it.first, orig)) 0 else 1 })
+                Pick(audioTrackLabel(lang, name, audio), sameLang(st.audioTrack, lang)) { app.playback.pickAudio(lang); dismiss() }
         }
         "s" -> SpeedPage(app, st) { page = "" }
         "c" -> {

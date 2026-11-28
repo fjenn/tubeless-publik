@@ -98,16 +98,19 @@ fun ShortsScreen(app: AppState) {
         LaunchedEffect(Unit) { if (!app.back()) app.go(Screen.Home) }
         return
     }
-    val list = remember { mutableStateListOf<Video>() }
+    // the Shorts made ready while Home showed (ShortsWarm): the first one plays the moment the tab opens
+    val warmed = remember { if (app.shortFirst == null) ShortsWarm.ready() else null }
+    val hiddenNow = remember { app.store.taste.value.hiddenVideos }
+    val list = remember { mutableStateListOf<Video>().apply { warmed?.reels?.map { it.video }?.filter { it.id !in hiddenNow }?.let { addAll(it) } } }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val player = app.player
     // YouTube's own Shorts sequence for this session (signed in or the remembered visitor), as youtube.com/shorts
-    var seq by remember { mutableStateOf(ReelSequence()) }
+    var seq by remember { mutableStateOf(warmed?.seq ?: ReelSequence()) }
     /** a fresh run (the Shorts tab tapped again): a new pager from the first Short */
     var run by remember { mutableStateOf(0) }
-    val reelParams = remember { HashMap<String, String?>() }
+    val reelParams = remember { HashMap<String, String?>().apply { warmed?.reels?.forEach { put(it.video.id, it.playerParams) } } }
     suspend fun more() {
         if (loading) return
         loading = true
@@ -123,26 +126,59 @@ fun ShortsScreen(app: AppState) {
             if (list.isEmpty()) error = e.message
         } finally { loading = false }
     }
+    val streams = remember { mutableStateMapOf<String, Stream>().apply { warmed?.streams?.let { putAll(it) } } }
     LaunchedEffect(Unit) {
-        app.shortFirst?.let { list.add(it); app.shortFirst = null }
-        more()
+        val first = app.shortFirst
+        if (first != null) { list.add(first); app.shortFirst = null }
+        // a batch still on its way is waited for rather than asked for twice
+        else if (warmed == null && list.isEmpty()) ShortsWarm.take()?.let { b ->
+            seq = b.seq
+            b.reels.forEach { reelParams[it.video.id] = it.playerParams }
+            streams.putAll(b.streams)
+            list.addAll(b.reels.map { it.video }.filter { it.id !in app.store.taste.value.hiddenVideos && !Ads.isAd(it.id) })
+        }
+        if (list.size < 6) more()
     }
     val pager = androidx.compose.runtime.key(run) { rememberPagerState { list.size } }
-    val streams = remember { mutableStateMapOf<String, Stream>() }
     val fetching = remember { HashMap<String, Deferred<Result<Stream>>>() }
     var current by remember { mutableStateOf<Video?>(null) }
     var watchStart by remember { mutableStateOf(0L) }
+    /** when the pager settled on [current], until its first frame showed (the E2E log's short_first_frame) */
+    var settledAt by remember { mutableStateOf(0L) }
+    /** when this screen opened, until the first Short's first frame (the E2E log's shorts_open_first_frame) */
+    var openedAt by remember { mutableStateOf(Sys.nowMs()) }
 
     /** one fetch per Short, shared by whoever asks first */
     suspend fun streamOf(id: String): Stream {
         streams[id]?.let { return it }
+        // a saved Short plays from the device, also without internet
+        app.offline.stream(id)?.let { streams[id] = it; return it }
         // a failed fetch comes back as a Result: it must not cancel the screen's other work
         val d = fetching.getOrPut(id) { scope.async { runCatching { YouTube.stream(id) } } }
         return try { d.await().getOrThrow().also { streams[id] = it } } finally { fetching.remove(id) }
     }
 
+    /** how a Short plays: looped, at the quality setting, kept ready for a swipe back */
+    fun optionsFor(v: Video, s: Stream): PlayOptions = ShortsWarm.options(app, v, s)
+
+    /**
+     * The players that can (iOS) buffer the next two Shorts and the one above while this one plays, so a swipe
+     * either way starts at once (as YouTube's app); the others let go. Only while [page] is still the one on screen.
+     */
+    fun warm(page: Int) {
+        val want = listOf(page + 1, page + 2, page - 1).mapNotNull { list.getOrNull(it) }
+        player.trimPreloads(want.map { it.id } + listOfNotNull(list.getOrNull(page)?.id))
+        for (n in want) {
+            scope.launch {
+                val s = runCatching { streamOf(n.id) }.getOrNull() ?: return@launch
+                if (current?.id == list.getOrNull(page)?.id) player.preload(s, optionsFor(n, s))
+            }
+        }
+    }
+
+    /** the streams of the next four and the one above, nearest first, so the players above always have them */
     fun ahead(page: Int) {
-        for (p in listOf(page + 1, page + 2, page - 1)) {
+        for (p in listOf(page + 1, page + 2, page - 1, page + 3, page + 4)) {
             val n = list.getOrNull(p) ?: continue
             if (n.id !in streams && n.id !in fetching) scope.launch { runCatching { streamOf(n.id) } }
         }
@@ -193,9 +229,10 @@ fun ShortsScreen(app: AppState) {
             if (current?.id == v.id) return@collect
             current?.let { learnFrom(it) }
             current = v
+            settledAt = Sys.nowMs()
             Parity.played += v.id
             E2E.log("short", "videoId" to v.id, "page" to page, "ad" to Ads.isAd(v.id), "adRequests" to Ads.requests)
-            if (page >= list.size - 4) scope.launch { more() }
+            if (page >= list.size - 6) scope.launch { more() }
             ahead(page)
             try {
                 val s = streamOf(v.id)
@@ -203,9 +240,9 @@ fun ShortsScreen(app: AppState) {
                 watchStart = Sys.nowMs()
                 // the view and watch-time pings, as the web's Shorts player sends them (el=shortspage)
                 if (!app.store.settings.value.historyOff) WatchTime.start(v.id, s.lengthSec.toDouble(), reelParams[v.id])
-                // Auto as every video (QUALITY): a Short is upright, so its 1080p is 1920 tall; the old cap of 720 played it at 404×720
-                val cap = app.store.settings.value.let { st -> if (app.platform.metered()) st.maxHeightMobileData else st.maxHeight }
-                player.load(s, PlayOptions(maxHeight = if (cap <= 0) Quality.AUTO else cap, loop = true, volume = app.store.settings.value.volume, title = s.title, artist = s.author, artwork = v.thumb))
+                player.load(s, optionsFor(v, s))
+                // the next one (last, so it is the newest of the two kept) gets ready while this one plays
+                warm(page)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) { if (current?.id == v.id) current = null; throw e }
                 app.toast(if ((e as? YtError)?.kind == YtError.Kind.LOGIN) tr(BOT_CHECK) else e.message ?: tr("This video can't be played"))
@@ -217,12 +254,44 @@ fun ShortsScreen(app: AppState) {
             }
         }
     }
+    // more Shorts came in (the sequence's next page): the ones just past the old end get their streams and players now,
+    // not when they come on screen (the swipe after each page end waited 2 s)
+    LaunchedEffect(Unit) {
+        snapshotFlow { list.size }.collect {
+            val c = current ?: return@collect
+            val page = list.indexOfFirst { it.id == c.id }.takeIf { it >= 0 } ?: return@collect
+            ahead(page)
+            if (player.state.value.videoId == c.id) warm(page)
+        }
+    }
+    // a swipe has begun: the streams past the Short it heads for are asked now, and the players warmed again (the
+    // settle does the same, a few hundred ms later)
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.isScrollInProgress to pager.currentPageOffsetFraction.let { if (it > 0.02f) 1 else if (it < -0.02f) -1 else 0 } }
+            .collect { (moving, way) ->
+                if (!moving || way == 0) return@collect
+                val page = pager.currentPage
+                ahead(page + way)
+                if (current?.id == list.getOrNull(page)?.id) warm(page)
+            }
+    }
     // the pings follow the player (position, playing or paused) for the Short on screen
     LaunchedEffect(Unit) {
         player.state.collect { st ->
             val v = current ?: return@collect
             if (st.videoId == v.id) WatchTime.tick(v.id, st.positionMs / 1000.0, st.durationMs / 1000.0, st.playing)
+            // the swipe's cost as the user sees it: from the pager settling to the Short's first frame moving
+            if (st.videoId == v.id && settledAt > 0 && st.playing && st.positionMs > 0) {
+                E2E.log("short_first_frame", "videoId" to v.id, "ms" to Sys.nowMs() - settledAt)
+                if (openedAt > 0) { E2E.log("shorts_open_first_frame", "videoId" to v.id, "ms" to Sys.nowMs() - openedAt); openedAt = 0 }
+                settledAt = 0
+            }
         }
+    }
+    // the simulator check (`-shortswipe <ms>`): the next Short every so often, as a swipe would
+    LaunchedEffect(Unit) {
+        val every = E2E.shortsSwipeMs.takeIf { it > 0 } ?: return@LaunchedEffect
+        while (true) { delay(every); go(1) }
     }
     DisposableEffect(Unit) {
         app.shortsKeys = { key ->
@@ -324,6 +393,8 @@ private fun ShortPage(app: AppState, v: Video, s: Stream?, active: Boolean) {
     var info by remember(v.id) { mutableStateOf<Details?>(null) }
     // the like and comment counts and the channel's picture come with the details: asked for as the Short comes up
     LaunchedEffect(comments, active) { if ((comments || active) && info == null) info = runCatching { YouTube.details(v.id) }.getOrNull() ?: Details() }
+    // signed in: the account's like, dislike and subscription for the Short on screen (and its like params)
+    if (active) AccountWatchLoader(app, full)
     var menu by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf(false) }
 
@@ -379,8 +450,12 @@ private fun ShortPage(app: AppState, v: Video, s: Stream?, active: Boolean) {
                     }
                 },
         ) {
-            if (!app.store.settings.value.hideThumbs) Img(v.thumb, Modifier.fillMaxSize())
             if (mine) player.View(Modifier.fillMaxSize())
+            // the picture until the Short's first frame moves: no black between the swipe and the video (once shown, it
+            // stays: a loop back to 0:00 must not flash the picture)
+            var framed by remember(v.id) { mutableStateOf(false) }
+            if (!mine) framed = false else if (st.positionMs > 0 && st.playing) framed = true
+            if (!framed && !app.store.settings.value.hideThumbs) Img(v.thumb, Modifier.fillMaxSize())
             // paused: a play sign that pops in (and shrinks away when it plays again)
             androidx.compose.animation.AnimatedVisibility(mine && !st.playing && !st.buffering, Modifier.align(Alignment.Center),
                 enter = fadeIn(tween(Motion.SHORT)) + scaleIn(spring(dampingRatio = 0.55f, stiffness = 600f), initialScale = 1.4f),
@@ -476,7 +551,7 @@ private fun ShortPage(app: AppState, v: Video, s: Stream?, active: Boolean) {
         }
     }
     if (pick) PlaylistPicker(full, app) { pick = false }
-    if (comments) ModalBottomSheet(onDismissRequest = { comments = false }) {
+    if (comments) ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = { comments = false }) {
         val d = info
         val token = d?.commentsToken
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.7f)) {

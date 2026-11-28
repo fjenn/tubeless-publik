@@ -248,7 +248,7 @@ class Offline(private val app: AppState) {
     /** stops a download and keeps what it has; [resume] carries on from there */
     fun pause(id: String) {
         files.edit(id) { it.copy(paused = true) }
-        stats[id] = (stats[id] ?: DlStat()).copy(paused = true, bps = 0)
+        stats[id] = (stats[id] ?: DlStat()).copy(paused = true, bps = 0, waiting = "")
         jobs[id]?.let { pausing += id; it.cancel() }
     }
 

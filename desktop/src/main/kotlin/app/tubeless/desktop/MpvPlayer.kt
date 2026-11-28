@@ -588,7 +588,8 @@ class MpvPlayer : VideoPlayer {
     // ------------------------------------------------------------------ VideoPlayer
     override fun load(s: Stream, o: PlayOptions) {
         loadAt = System.currentTimeMillis(); firstFrameAt = 0; openedVideo = null; openedAudio = null; skippedAtLoad = framesSkipped
-        if (stream?.id != s.id) audioLang = null
+        // the language Playback chose (the original, or a dub in yours: AudioPick.preferred); the same video again keeps its own
+        audioLang = o.audioLang ?: audioLang.takeIf { stream?.id == s.id }
         stream = s
         opts = o
         pinned = 0

@@ -144,7 +144,7 @@ private fun androidx.compose.foundation.layout.RowScope.PlusTab(open: () -> Unit
 @Composable
 private fun QuickActions(app: AppState, close: () -> Unit) {
     val clip = LocalClipboardManager.current
-    ModalBottomSheet(onDismissRequest = close, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+    ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = close, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Text(tr("Create"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))

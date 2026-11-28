@@ -83,6 +83,8 @@ class SwitchPlayer(val local: VideoPlayer, scope: CoroutineScope) : VideoPlayer 
 
     private val p get() = target.value
     override fun load(s: Stream, o: PlayOptions) = p.load(s, o)
+    override fun preload(s: Stream, o: PlayOptions) = p.preload(s, o)
+    override fun trimPreloads(keep: Collection<String>) = p.trimPreloads(keep)
     override fun play() = p.play()
     override fun pause() = p.pause()
     override fun seekTo(ms: Long) = p.seekTo(ms)

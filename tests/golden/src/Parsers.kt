@@ -46,6 +46,12 @@ val PARSERS: Map<String, (JsonElement) -> Any?> = mapOf(
         )
     },
     "commentSheet" to { j -> AccountParse.comments(j) },
+    // input: {case name: a write's answer}; output: whether each counts as done (a lapsed sign-in must not)
+    "writeOk" to { j -> (j as kotlinx.serialization.json.JsonObject).mapValues { (_, v) -> AccountParse.writeOk(v) } },
+    // youtube.com's "Save to..." list (playlist/get_add_to_playlist)
+    "saveTargets" to { j -> AccountParse.addTargets(j) },
+    // the signed-in writes as they go out: {"answer": what the fake YouTube answers, "calls": [[name, args...], ...]}
+    "writeRequests" to { j -> writeRequests(j) },
     "notifications" to { j -> Notifications.parse(j) to Notifications.unseenOf(j) },
     "playbackTracking" to { j -> AccountParse.tracking(j) },
     // input: [channelId, "ALL"|"PERSONALIZED"|"NONE"] -> the params written here and the index read back;
@@ -74,3 +80,56 @@ val PARSERS: Map<String, (JsonElement) -> Any?> = mapOf(
             (o["state"] as? JsonPrimitive)?.content, d("rt"), (o["rtn"] as JsonPrimitive).content.toInt())
     },
 )
+
+/**
+ * Runs each write of YouTubeAccount against a fake signed-in session (InnerTube.sendHook) and returns what it would
+ * send: the endpoint, the client, whether it was signed, onBehalfOfUser, and the body without the context.
+ */
+private fun writeRequests(j: JsonElement): Any {
+    val answer = j.at("answer").toString()
+    val sent = ArrayList<Map<String, Any?>>()
+    val auth = app.tubeless.engine.InnerTube.authHeaders
+    app.tubeless.engine.InnerTube.authHeaders = { origin -> mapOf("Authorization" to "SAPISIDHASH 0_test", "Cookie" to "SAPISID=test", "X-Origin" to origin, "X-Goog-AuthUser" to "0") }
+    app.tubeless.engine.InnerTube.sendHook = { endpoint, body, headers ->
+        val ctx = body["context"]
+        sent += mapOf(
+            "endpoint" to endpoint,
+            "client" to ctx.at("client.clientName").str,
+            "signed" to (headers["Authorization"]?.startsWith("SAPISIDHASH") == true && headers.containsKey("Cookie") && headers["X-Origin"] == "https://www.youtube.com"),
+            "body" to kotlinx.serialization.json.JsonObject(body.filterKeys { it != "context" }).toString(),
+        )
+        answer
+    }
+    try {
+        val out = ArrayList<Any?>()
+        for (c in j.at("calls") as kotlinx.serialization.json.JsonArray) {
+            val a = (c as kotlinx.serialization.json.JsonArray).map { (it as? JsonPrimitive)?.takeIf { p -> p !is kotlinx.serialization.json.JsonNull }?.content }
+            YouTubeAccount.let { y ->
+                app.tubeless.engine.WriteLimit.reset()
+                sent.clear()
+                val result: Any? = kotlinx.coroutines.runBlocking {
+                    when (a[0]) {
+                        "like" -> y.like(a[1]!!, a.getOrNull(2))
+                        "dislike" -> y.dislike(a[1]!!, a.getOrNull(2))
+                        "removeLike" -> y.removeLike(a[1]!!, a.getOrNull(2))
+                        "subscribe" -> y.subscribe(a[1]!!)
+                        "unsubscribe" -> y.unsubscribe(a[1]!!)
+                        "addTo" -> y.editPlaylist(a[1]!!, add = listOf(a[2]!!))
+                        "removeFrom" -> y.editPlaylist(a[1]!!, remove = listOf(a[2]!!))
+                        "postComment" -> y.postComment(a[1]!!, a[2]!!)
+                        "reply" -> y.reply(a[1]!!, a[2]!!)
+                        "commentAction" -> y.commentAction(a[1]!!)
+                        "saveTargets" -> y.saveTargets(a[1]!!)
+                        else -> error("unknown call ${a[0]}")
+                    }
+                }
+                out += mapOf("call" to a, "requests" to sent.toList(), "result" to result)
+            }
+        }
+        return out
+    } finally {
+        app.tubeless.engine.InnerTube.sendHook = null
+        app.tubeless.engine.InnerTube.authHeaders = auth
+        app.tubeless.engine.WriteLimit.reset()
+    }
+}

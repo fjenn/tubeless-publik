@@ -120,6 +120,9 @@ class AppState(val platform: Platform, val store: Store) {
         scope.launch {
             store.settings.update { it.copy(checkedAt = Sys.nowMs()) }
             Remote.refreshClients()
+            // iPhone/iPad: TestFlight and the App Store bring updates; the GitHub releases are the Mac/Linux/Windows/Android
+            // files (it told TestFlight users "1.0.2 is out, pick the file for your system")
+            if (platform.name == "ios") { if (!quiet) toast(tr("Tubeless is up to date")); return@launch }
             val os = Sys.osName()
             // Linux: the release page, to pick deb/rpm/tar.gz
             // macOS: the universal DMG (Apple silicon + Intel, since 1.0.1)
@@ -189,7 +192,7 @@ class AppState(val platform: Platform, val store: Store) {
 
     // ---------------------------------------------------------------- the signed-in account (S4, ui/AccountSync.kt)
     /** sends the library's changes to the signed-in account (Store.mirror) */
-    val accountSync by lazy { AccountSync(store, scope) }
+    val accountSync by lazy { AccountSync(store, scope, ::toast) }
     /** counts sign-ins and sign-outs: the screens showing the account's lists key on it and load again */
     var account by androidx.compose.runtime.mutableIntStateOf(0)
         private set

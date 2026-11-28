@@ -67,7 +67,7 @@ object FeedPlay {
             val s = runCatching { app.offline.stream(v.id) ?: Streams.get(app.scope, v.id) }.getOrNull() ?: run { if (id == v.id) id = null; return@launch }
             if (id != v.id || app.playback.video != null) return@launch
             app.player.setMuted(true)
-            app.player.load(s, PlayOptions(maxHeight = 360, autoplay = true, volume = 0f, title = s.title, artist = s.author))
+            app.player.load(s, PlayOptions(maxHeight = 360, autoplay = true, volume = 0f, title = s.title, artist = s.author, audioLang = app.playback.audioLangFor(s)))
             app.player.setMuted(true)
         }
     }
@@ -137,7 +137,8 @@ private fun FeedAutoplay(app: AppState, key: Any, scrolling: () -> Boolean, slot
     val settings by app.store.settings.state.collectAsState()
     LaunchedEffect(key, settings.feedPlayback) {
         snapshotFlow {
-            if (scrolling()) return@snapshotFlow null
+            // while a video plays (the watch page, the mini player) nothing here; once it closes the card plays again
+            if (scrolling() || app.playback.video != null) return@snapshotFlow null
             val (top, bottom, list) = slots()
             list.firstNotNullOfOrNull { item ->
                 val v = at(item.key) ?: return@firstNotNullOfOrNull null
@@ -160,7 +161,11 @@ private fun FeedAutoplay(app: AppState, key: Any, scrolling: () -> Boolean, slot
 fun BoxScope.FeedPlayLayer(app: AppState, v: Video) {
     if (FeedPlay.id != v.id) return
     val st by app.player.state.collectAsState()
-    if (st.videoId != v.id || st.positionMs <= 0) return
+    // the picture stays until the video moves: a position alone can come before the first frame (a black box)
+    var moving by androidx.compose.runtime.remember(v.id) { mutableStateOf(false) }
+    if (st.videoId != v.id) { moving = false; return }
+    if (st.playing && st.positionMs > 0) moving = true
+    if (!moving) return
     app.player.View(Modifier.matchParentSize())
     // a tap anywhere opens it (the card's own click), the speaker toggles the sound
     Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(36.dp).clip(CircleShape).background(Color(0x99000000))

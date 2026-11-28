@@ -436,7 +436,7 @@ private fun ChannelAboutSheet(app: AppState, h: ChannelPage, onClose: () -> Unit
         val t = h.aboutToken ?: return@LaunchedEffect
         try { info = YouTube.channelAbout(t) } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true }
     }
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)) {
         LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             item {

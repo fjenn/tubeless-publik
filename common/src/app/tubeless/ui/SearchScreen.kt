@@ -231,7 +231,7 @@ fun SearchScreen(app: AppState, initial: String) {
             else -> ItemGrid(
                 shown, app,
                 loading = pager.loading, onEnd = if (refine.active) null else ({ pager.loadMore() }),
-                rows = !compact && !grid && !app.platform.tv, wideRows = true,
+                rows = !compact && !grid && !app.platform.tv, wideRows = true, shortsShelves = !refine.active,
                 header = if (!refine.active) null else ({
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                         val videos = loaded.count { it is Video }
@@ -309,8 +309,10 @@ private fun SearchFilters(o: SearchOptions, set: (SearchOptions) -> Unit, r: Sea
                 val dates = listOf(2 to "Today", 3 to "This week", 4 to "This month", 5 to "This year")
                 val feats = listOf(8 to "Live", 14 to "4K", 4 to "HD", 5 to "Subtitles/CC", 6 to "Creative Commons", 15 to "360°", 26 to "VR180", 7 to "3D", 25 to "HDR", 23 to "Location", 9 to "Purchased")
                 val prio = listOf(0 to "Relevance", 3 to "Popularity")
-                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth()) {
-                    val w = Modifier.widthIn(min = 150.dp).fillMaxWidth(0.19f)
+                // a phone: two columns sharing the width (five of 150 dp left a gap and a short line on the right)
+                val narrow = LocalCompact.current
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = if (narrow) 2 else Int.MAX_VALUE) {
+                    val w = if (narrow) Modifier.weight(1f) else Modifier.widthIn(min = 150.dp).fillMaxWidth(0.19f)
                     RowScopeCol("Type", types.map { it.second to (o.type == it.first) }, { i -> set(o.copy(type = if (o.type == types[i].first) 0 else types[i].first)); close() }, w)
                     RowScopeCol("Duration", durations.map { it.second to (o.duration == it.first) }, { i -> set(o.copy(duration = if (o.duration == durations[i].first) 0 else durations[i].first)); close() }, w)
                     RowScopeCol("Upload date", dates.map { it.second to (o.date == it.first) }, { i -> set(o.copy(date = if (o.date == dates[i].first) 0 else dates[i].first)); close() }, w)
@@ -324,7 +326,9 @@ private fun SearchFilters(o: SearchOptions, set: (SearchOptions) -> Unit, r: Sea
                 Text(tr("More, on this device").uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = c.onSurfaceVariant, letterSpacing = 0.6.sp,
                     modifier = Modifier.padding(top = 24.dp))
                 HorizontalDivider(Modifier.padding(top = 10.dp, bottom = 10.dp), color = c.outlineVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // a phone: the two chips, then the two view limits side by side (in one row they ran off the window)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically, maxItemsInEachRow = if (narrow) 2 else Int.MAX_VALUE) {
                     for ((v, label) in listOf(1 to "Fewest views", 2 to "Oldest first")) FilterChip(r.sort == v, onClick = {
                         setR(r.copy(sort = if (r.sort == v) 0 else v)); set(o.copy(sort = 0))
                     }, label = { Text(tr(label)) })
@@ -335,8 +339,9 @@ private fun SearchFilters(o: SearchOptions, set: (SearchOptions) -> Unit, r: Sea
                             label = { Text(tr(label)) }, placeholder = { Text(tr("No limit")) }, singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                     }
-                    limit("Minimum views", r.minViews, { setR(r.copy(minViews = it)) }, Modifier.width(170.dp))
-                    limit("Maximum views", r.maxViews, { setR(r.copy(maxViews = it)) }, Modifier.width(170.dp))
+                    val field = if (narrow) Modifier.weight(1f) else Modifier.width(170.dp)
+                    limit("Minimum views", r.minViews, { setR(r.copy(minViews = it)) }, field)
+                    limit("Maximum views", r.maxViews, { setR(r.copy(maxViews = it)) }, field)
                 }
                 if (r.minViews != null && r.maxViews != null && r.maxViews < r.minViews)
                     Text(tr("Maximum views must be at least the minimum"), color = c.error, style = MaterialTheme.typography.bodySmall)

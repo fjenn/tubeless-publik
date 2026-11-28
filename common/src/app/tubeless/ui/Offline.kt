@@ -70,8 +70,8 @@ import okio.buffer
 /*
  * Downloads, the part every device shares (S6): what a saved video is, the download settings, the
  * quality question, the Downloads page and the settings card. The downloader itself is per platform
- * (common/jvm OfflineJvm.kt: DASH files over HTTP ranges; common/ios OfflineIos.kt: Apple's HLS
- * package in a background session); both expose the same members, so these screens use either.
+ * (common/jvm OfflineJvm.kt: DASH files over HTTP ranges; common/ios OfflineIos.kt: H.264 + AAC over
+ * HTTP ranges, put together into one .mp4); both expose the same members, so these screens use either.
  *
  * No artificial limits: any quality the video has (up to 8K, AV1/VP9/H.264), downloads never expire,
  * no device or count limit, as many at once as the settings say.
@@ -94,6 +94,8 @@ data class SavedFile(
     val channels: Int = 2,
     /** relative to the offline folder */
     val file: String,
+    /** the sound's track ("en-US.4", a dub's or the original's) when the video has several; "" otherwise */
+    val track: String = "",
 )
 
 /** captions saved with a video, cleaned WebVTT ([file] relative to the offline folder) */
@@ -336,6 +338,7 @@ internal fun Offline.attachShared(app: AppState) {
             val h = rest.substringBefore(':').toIntOrNull() ?: DownloadPrefs.BEST
             val codec = rest.substringAfter(':', "auto").ifEmpty { "auto" }
             if (!has(id) && !downloading(id)) start(Video(id, id), h, codec = codec)
+            else if (stats[id]?.paused == true) resume(id)
         }
         app.go(Screen.Downloads)
     }
@@ -348,13 +351,31 @@ internal fun Offline.attachShared(app: AppState) {
             for (id in idx.items.keys) if (done.add(id)) export(id) { p -> OfflineEvents.log("export_result", "videoId" to id, "file" to p) }
         }
     }
-    offlineEnv("TUBELESS_E2E_PLAY_OFFLINE")?.ifEmpty { null }?.let { id ->
+    // several ids ("a,b,c"): each is played in turn, then sought to the middle (offline_seek: where it got to and whether it plays)
+    offlineEnv("TUBELESS_E2E_PLAY_OFFLINE")?.ifEmpty { null }?.split(',')?.filter { it.isNotBlank() }?.let { ids ->
         app.scope.launch {
-            while (!has(id)) kotlinx.coroutines.delay(1000)
-            kotlinx.coroutines.delay(1500)
-            app.go(Screen.Downloads)
-            kotlinx.coroutines.delay(6000)
-            saved.value.items[id]?.let { app.watch(it.asVideo()) }
+            for ((i, id) in ids.withIndex()) {
+                while (!has(id)) kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(1500)
+                if (i == 0) { app.go(Screen.Downloads); kotlinx.coroutines.delay(6000) }
+                saved.value.items[id]?.let { app.watch(it.asVideo()) }
+                if (ids.size == 1) break
+                kotlinx.coroutines.delay(10_000)
+                val st = app.player.state.value
+                val to = (st.durationMs.takeIf { it > 0 } ?: (saved.value.items[id]?.lengthSec ?: 0) * 1000L) / 2
+                val t0 = Sys.nowMs()
+                app.player.seekTo(to)
+                var moved = -1L
+                while (Sys.nowMs() - t0 < 15_000) {
+                    kotlinx.coroutines.delay(100)
+                    val s = app.player.state.value
+                    if (s.playing && !s.buffering && s.positionMs > to + 300) { moved = Sys.nowMs() - t0; break }
+                }
+                kotlinx.coroutines.delay(3000)
+                val s = app.player.state.value
+                OfflineEvents.log("offline_seek", "videoId" to id, "toMs" to to, "positionMs" to s.positionMs, "durationMs" to s.durationMs,
+                    "playing" to s.playing, "playsAfterMs" to moved, "audio" to s.audioTrack, "height" to s.nowHeight, "error" to s.error)
+            }
         }
     }
 }
@@ -522,13 +543,14 @@ private fun QueueRow(app: AppState, v: Video) {
             Text(v.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
             val words = when {
-                st.paused -> tr("Paused")
+                st.paused -> st.waiting.ifEmpty { tr("Paused") }
                 st.waiting.isNotEmpty() -> st.waiting
                 else -> listOfNotNull(
                     "${(p * 100).toInt()}%",
                     if (st.total > 0) sizeText(st.done) + " " + tr("of") + " " + sizeText(st.total) else null,
                     if (st.bps > 0) sizeText(st.bps) + "/s" else null,
-                ).joinToString(" · ")
+                // a line breaks only between the parts, never inside "7 MB/s"
+                ).joinToString(" · ") { it.replace(' ', '\u00A0') }
             }
             Text(words, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -562,7 +584,7 @@ private fun SavedRow(app: AppState, s: SavedVideo, all: List<Video>, onNote: (St
                     if (s.chapters.isNotEmpty()) tr("{n} chapters").replace("{n}", "${s.chapters.size}") else null,
                     sizeText(s.size),
                     if (s.smart) tr("Smart download") else null,
-                ).joinToString(" · "),
+                ).joinToString(" · ") { it.replace(' ', '\u00A0') },
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp),
             )
         }

@@ -1,6 +1,7 @@
 package app.tubeless.ios
 
 import androidx.compose.runtime.snapshotFlow
+import app.tubeless.engine.Net
 import app.tubeless.engine.Sys
 import app.tubeless.ui.AppState
 import app.tubeless.ui.PlayerState
@@ -54,7 +55,8 @@ class MediaControls(private val app: AppState) {
             combine(app.player.state, what) { s, _ -> s }.collect { show(it) }
         }
         app.scope.launch {
-            snapshotFlow { pb.song?.art?.ifEmpty { null } ?: pb.video?.thumbHigh ?: "" }.distinctUntilChanged().collect { loadArt(it) }
+            // a saved video's cover is the thumbnail saved with it (no network)
+            snapshotFlow { pb.song?.art?.ifEmpty { null } ?: pb.video?.let { v -> app.offline.saved.value.items[v.id]?.let { app.offline.thumbUrl(it) } ?: v.thumbHigh } ?: "" }.distinctUntilChanged().collect { loadArt(it) }
         }
     }
 
@@ -120,7 +122,7 @@ class MediaControls(private val app: AppState) {
         artUrl = url
         art = null
         toldKey = null
-        if (url.isEmpty()) return
+        if (url.isEmpty() || Net.dead && !url.startsWith("file:")) return
         val image = withContext(Sys.IO) { NSURL.URLWithString(url)?.let { NSData.dataWithContentsOfURL(it) }?.let { UIImage(data = it) } }
         if (artUrl != url) return
         if (image == null) {

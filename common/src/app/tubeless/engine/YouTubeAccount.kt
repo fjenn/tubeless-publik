@@ -97,6 +97,9 @@ data class CommentActions(
 /** The comments' box ("Add a comment...") and each comment's actions, from a comments page. */
 data class CommentSheet(val createParams: String?, val actions: Map<String, CommentActions>)
 
+/** A playlist in youtube.com's "Save to..." list, and whether the video is in it. */
+data class SaveTarget(val id: String, val title: String, val has: Boolean)
+
 /** A playlist the account owns or saved (Library). */
 data class AccountPlaylist(val id: String, val title: String, val thumb: String, val countText: String)
 
@@ -293,7 +296,8 @@ object AccountParse {
         val subscribed = mutations.firstNotNullOfOrNull { m -> m.at("payload.subscriptionStateEntity")?.let { it.at("subscribed").bool } }
             ?: sub?.at("subscribed")?.let { it.bool }
         val channelId = sub.at("channelId").str
-            ?: d.at("contents.twoColumnWatchNextResults.results.results.contents")?.findFirst("browseId").str ?: ""
+            // the first channel link on the page (a hashtag or a playlist link before it is not the uploader)
+            ?: d.at("contents.twoColumnWatchNextResults.results.results.contents")?.findAll("browseId")?.firstNotNullOfOrNull { it.str?.takeIf { b -> b.startsWith("UC") } } ?: ""
         // the bell: its states (stateId = the bell index) and the params of each choice in its menu
         val toggle = sub.at("notificationPreferenceButton.subscriptionNotificationToggleButtonRenderer")
         // (the bell only means something on a channel you're subscribed to)
@@ -367,6 +371,15 @@ object AccountParse {
         return CommentSheet(create, out)
     }
 
+    /**
+     * youtube.com's "Save to..." list (playlist/get_add_to_playlist): each playlist the account may add to, with
+     * whether this video is in it already (containsSelectedVideos ALL), Watch later included.
+     */
+    fun addTargets(d: JsonElement?): List<SaveTarget> = d?.findAll("playlistAddToOptionRenderer", emptySet()).orEmpty().mapNotNull { r ->
+        val id = r.at("playlistId").str ?: return@mapNotNull null
+        SaveTarget(id, r.at("title").text ?: id, r.at("containsSelectedVideos").str == "ALL")
+    }
+
     /** the id YouTube gave a new playlist (playlist/create) */
     fun createdPlaylist(d: JsonElement?): String? = d.at("playlistId").str
 
@@ -394,6 +407,11 @@ object AccountParse {
         if (d.at("error") != null) return false
         if (d.findAll("alertRenderer", emptySet()).any { it.at("type").str == "ERROR" }) return false
         if (d.at("status").str?.contains("FAIL") == true) return false
+        // create_comment / create_comment_reply say how it went here (STATUS_SUCCEEDED or STATUS_FAILED)
+        if (d.at("actionResult.status").str?.contains("FAIL") == true) return false
+        // a lapsed sign-in: YouTube answers 200 but says it's signed out, or offers its "Sign in" dialog instead of acting
+        if (loggedOut(d)) return false
+        if (d.findAll("signInEndpoint", emptySet()).isNotEmpty()) return false
         return d.at("feedbackResponses").arr.all { it.at("isProcessed").let { p -> p == null || p.bool } }
     }
 }
@@ -597,6 +615,18 @@ object YouTubeAccount {
             for ((k, v) in w.actions) seen[k] = v
         }
 
+    /**
+     * Each comment's signed-in actions (like, reply), from every comments page read while signed in: the comments
+     * list reads its pages with YouTube.comments, which hands each answer here, so no page is asked for twice.
+     */
+    private val commentActs = Sys.concurrentMap<String, CommentActions>()
+    fun commentActions(commentId: String): CommentActions? = commentActs[commentId]
+    fun noteComments(d: JsonElement?) {
+        if (!signedIn || d == null) return
+        if (commentActs.size > 3000) commentActs.clear()
+        commentActs.putAll(AccountParse.comments(d).actions)
+    }
+
     /** a comments page's signed-in actions (the same token YouTube.comments takes) */
     suspend fun comments(token: String): CommentSheet? = read("next", mapOf("continuation" to token))?.let(AccountParse::comments)
 
@@ -663,6 +693,11 @@ object YouTubeAccount {
     suspend fun clearHistory(): Boolean = historyControls()?.clear?.let { feedback(it) } ?: false
     /** pauses ([on] false) or turns watch history back on */
     suspend fun setHistoryOn(on: Boolean): Boolean = historyControls()?.let { c -> (if (on) c.resume else c.pause)?.let { feedback(it) } } ?: false
+
+    /** the playlists this video can be saved to, as the account has them (null signed out or on failure) */
+    suspend fun saveTargets(videoId: String): List<SaveTarget>? = runCatching {
+        read("playlist/get_add_to_playlist", mapOf("videoIds" to arr(videoId), "excludeWatchLater" to false))?.let(AccountParse::addTargets)
+    }.getOrNull()
 
     /** adds or removes videos in a playlist ("WL" = Watch later) */
     suspend fun editPlaylist(playlistId: String, add: List<String> = emptyList(), remove: List<String> = emptyList()): Boolean {

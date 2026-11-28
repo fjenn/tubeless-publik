@@ -498,6 +498,11 @@ private fun SettingsRows(
             Toggle(tr("Tap the video to pause"), tr("A tap plays or pauses; the controls show with it"), s.tapToPause) { b -> set { it.copy(tapToPause = b) } }
         }
         r.row("player", tr("Captions") + " subtitles") { Toggle(tr("Captions"), tr("Turn captions on when a video has them"), s.captions) { b -> set { it.copy(captions = b) } } }
+        // which sound a video starts with (AudioPick.preferred): the original, or a dub in your language when the original isn't one of yours
+        val dubOpts = listOf("lang" to tr("In my language when available"), "orig" to tr("Always original"))
+        r.row("player", tr("Auto-dubbed audio") + " audio track dub language original") {
+            Choice(tr("Auto-dubbed audio"), dubOpts[if (s.dubs) 0 else 1].second, dubOpts) { c -> set { it.copy(dubs = c == "lang") } }
+        }
         // the look of the captions, as in the web player's caption menu, plus where they sit (#54)
         r.row("player", tr("Caption size") + " subtitles captions text") {
             Choice(tr("Caption size"), "${s.captionSize}%", listOf(50, 75, 100, 150, 200).map { "$it" to "$it%" }) { c -> set { it.copy(captionSize = c.toInt()) } }
@@ -708,10 +713,10 @@ private fun SettingsRows(
             }
         }
         // update checks only once Tubeless has its own releases (Brand.REPO, stream S9)
-        if (Remote.releasesOn) r.row("about", tr("Check for updates") + " update") {
+        if (Remote.releasesOn && app.platform.name != "ios") r.row("about", tr("Check for updates") + " update") {
             Toggle(tr("Check for updates"), tr("Each time the app opens, on GitHub: a newer version, and fixes for when YouTube changes something. Nothing about you is sent."), s.checkUpdates) { b -> set { it.copy(checkUpdates = b) } }
         }
-        if (Remote.releasesOn) r.row("about", tr("Check now") + " update") { SItem(tr("Check now"), tr("See if a newer version is out")) { app.checkForUpdates(now = true, quiet = false) } }
+        if (Remote.releasesOn && app.platform.name != "ios") r.row("about", tr("Check now") + " update") { SItem(tr("Check now"), tr("See if a newer version is out")) { app.checkForUpdates(now = true, quiet = false) } }
         app.platform.engineVersion()?.let { first ->
             r.row("about", tr("Update the YouTube engine") + " engine") {
                 var engine by remember { mutableStateOf(first) }

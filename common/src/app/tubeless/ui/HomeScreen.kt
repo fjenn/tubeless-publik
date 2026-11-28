@@ -144,7 +144,10 @@ fun HomeScreen(app: AppState) {
             Button(onClick = { app.go(Screen.Search()) }) { Text(tr("Search")) }
             TextButton(onClick = { HomeCtl.fresh() }) { Text(tr("Refresh")) }
         }
-        else -> HomeFeed(
+        else -> {
+          // the next pictures and Shorts get ready in the background once the first page is drawn (ShortsWarm)
+          Warmup(app, HomeCache.items.filterIsInstance<Video>())
+          HomeFeed(
             if (app.noShorts) HomeCache.items.filter { !(it is Video && it.short) } else HomeCache.items, app, loading = loading,
             onEnd = { load(true) },
             hero = LocalLook.current == 1,
@@ -156,7 +159,8 @@ fun HomeScreen(app: AppState) {
                 if (LocalLook.current == 1) Column { ContinueRow(app) }
                 NearbyBanner(app)
             },
-        )
+          )
+        }
     }
 }
 

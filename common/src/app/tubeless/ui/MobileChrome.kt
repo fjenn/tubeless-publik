@@ -69,7 +69,7 @@ private fun topicIcon(k: String): ImageVector = when (k) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExploreSheet(app: AppState, close: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = close) {
+    ModalBottomSheet(modifier = Modifier.sheetTop(), onDismissRequest = close) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             Text(tr("Explore"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 20.dp, bottom = 8.dp))
